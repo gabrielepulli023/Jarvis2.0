@@ -301,6 +301,18 @@ def _contesto_operativo_corrente():
         return None
 
 
+def _testo_operativo_risolto(testo: str, reference) -> str:
+    """Return the internal routing text without changing the user transcript."""
+    if getattr(reference, "resolved", False) and getattr(reference, "reference_type", None) == "application":
+        value = getattr(reference, "value", None)
+        if isinstance(value, dict) and value.get("name"):
+            if re.search(r"\bchiudi\w*\b", testo, re.I):
+                return f"chiudi {value['name']}"
+            if re.search(r"\bapri\w*\b", testo, re.I):
+                return f"apri {value['name']}"
+    return testo
+
+
 def _esegui_followup_operativo(testo, contesto):
     """Run a deterministic follow-up using only the real shared tools."""
     if not is_operational_followup(testo, contesto):
@@ -1676,36 +1688,33 @@ class JarvisWorker(QThread):
             if self._comando_memoria_o_conferma(domanda_corrente):
                 return
 
-            reference = resolve_reference(CORE_RUNTIME, domanda_corrente)
+            original_user_text = domanda_corrente
+            reference = resolve_reference(CORE_RUNTIME, original_user_text)
             if reference.needs_clarification:
                 candidates = " o ".join(str(item) for item in reference.alternatives)
                 self._risposta_locale(f"Quale intendi: {candidates}?")
                 return
-            domanda_con_contesto = contestualizza_risposta_companion(domanda_corrente, pending_companion)
-            if reference.resolved and reference.reference_type == "application" and isinstance(reference.value, dict):
-                if re.search(r"\bchiudi\w*\b", domanda_corrente, re.I):
-                    domanda_corrente = f"chiudi {reference.value.get('name')}"
-                elif re.search(r"\bapri\w*\b", domanda_corrente, re.I):
-                    domanda_corrente = f"apri {reference.value.get('name')}"
-            elif reference.resolved and reference.reference_type in {"assistant_proposal", "conversational entity/topic"}:
+            resolved_text = _testo_operativo_risolto(original_user_text, reference)
+            domanda_con_contesto = contestualizza_risposta_companion(resolved_text, pending_companion)
+            if reference.resolved and reference.reference_type in {"assistant_proposal", "conversational entity/topic"}:
                 domanda_con_contesto = (
                     f"Contesto conversazionale rilevante: {reference.value}\n"
-                    f"Nuova richiesta dell'utente: {domanda_corrente}"
+                    f"Nuova richiesta dell'utente: {original_user_text}"
                 )
                 if reference.reference_type == "assistant_proposal":
                     consume_pending_proposal(CORE_RUNTIME)
 
-            self.scheda_corrente_domanda = scheda_per_richiesta(domanda_corrente)
+            self.scheda_corrente_domanda = scheda_per_richiesta(original_user_text)
             self.apri_scheda_signal.emit(self.scheda_corrente_domanda)
-            self.trascrizione.emit(domanda_corrente)
+            self.trascrizione.emit(original_user_text)
             self.stato_assistente.emit("thinking")
 
             print("\n======================================")
-            print("TU:", domanda_corrente)
+            print("TU:", original_user_text)
             print("SCHEDA:", self.scheda_corrente_domanda)
             print("======================================")
 
-            usa_brain = deve_usare_router_operativo(domanda_corrente, contesto_operativo)
+            usa_brain = deve_usare_router_operativo(resolved_text, contesto_operativo)
             print("🧠 Controllo PC:", usa_brain)
 
             if usa_brain:
@@ -1756,7 +1765,7 @@ class JarvisWorker(QThread):
                             "Contesto strutturato dell'ultima operazione sul PC, ancora fresco e verificato: "
                             f"{json.dumps(contesto_operativo, ensure_ascii=False)}\n"
                             f"{istruzione_followup}"
-                            f"Nuova richiesta dell'utente: {domanda_corrente}"
+                        f"Nuova richiesta dell'utente: {resolved_text}"
                         )
                     followup_result = _esegui_followup_operativo(domanda_corrente, contesto_operativo)
                     if followup_result is not None:

@@ -42,6 +42,42 @@ class WorldModelTests(unittest.TestCase):
         self.world.refresh({"os_processes": [{"name": "Spotify.exe", "exe": "C:/Spotify/Spotify.exe", "pid": 2}], "os_processes_available": True, "active_window": None, "current_task": []})
         self.assertFalse(self.world.explain("application:chrome", "running")["value"])
 
+    def test_partial_process_inventory_cannot_prove_absence(self):
+        self.world.observe("application:chrome", {"running": True}, source="verified_tool", confidence=.99, evidence_type="verified")
+        self.world.refresh({"os_processes": [{"name": "Spotify.exe"}], "os_processes_available": True, "os_processes_complete": False})
+        self.assertTrue(self.world.explain("application:chrome", "running")["value"])
+
+    def test_complete_process_inventory_can_prove_absence(self):
+        self.world.observe("application:chrome", {"running": True}, source="verified_tool", confidence=.99, evidence_type="verified")
+        self.world.refresh({"os_processes": [{"name": "Spotify.exe"}], "os_processes_available": True, "os_processes_complete": True})
+        self.assertFalse(self.world.explain("application:chrome", "running")["value"])
+
+    def test_same_value_refreshes_expiry_without_update_event(self):
+        now = [0.0]
+        world = WorldModel(self.memory, events=EventBus(), clock=lambda: now[0])
+        events = []
+        world.events.subscribe("world.updated", lambda event: events.append(event))
+        world.observe("application:chrome", {"running": True}, source="vision", confidence=.5, evidence_type="inferred", ttl=45)
+        now[0] = 30.0
+        world.observe("application:chrome", {"running": True}, source="process_snapshot", confidence=.98, evidence_type="observed_structured", ttl=45)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(world.explain("application:chrome", "running")["source"], "process_snapshot")
+        self.assertEqual(world.explain("application:chrome", "running")["confidence"], .98)
+        now[0] = 60.0
+        self.assertTrue(world.explain("application:chrome", "running")["value"])
+
+    def test_identical_rejected_focus_conflict_is_deduplicated(self):
+        bus = EventBus()
+        conflicts = []
+        bus.subscribe("world.conflict", lambda event: conflicts.append(event))
+        world = WorldModel(self.memory, events=bus)
+        world.observe("application:chrome", {"focused": True}, source="dom", confidence=.98, evidence_type="observed_structured")
+        for _ in range(5):
+            world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        self.assertEqual(len(conflicts), 1)
+        world.observe("application:spotify", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        self.assertEqual(len(conflicts), 2)
+
     def test_managed_process_absence_does_not_close_application(self):
         self.world.observe_tool("apps.open", {"success": True, "verification": {"status": "verified"}}, {"application": "Chrome"})
         self.world.refresh({"opened_apps": [], "managed_processes": [], "active_window": None, "current_task": []})

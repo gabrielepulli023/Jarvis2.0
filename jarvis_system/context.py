@@ -61,11 +61,19 @@ class ContextEngine:
                 active = None
         managed = self.processes.snapshot()
         try:
-            os_processes = self.processes.running_inventory(300)
+            inventory = self.processes.running_inventory_snapshot(300)
+            os_processes = inventory["processes"]
             os_processes_available = True
+            os_processes_complete = bool(inventory.get("complete"))
         except (AttributeError, OSError):
-            os_processes = []
-            os_processes_available = False
+            try:
+                os_processes = self.processes.running_inventory(300)
+                os_processes_complete = False
+                os_processes_available = True
+            except (AttributeError, OSError):
+                os_processes = []
+                os_processes_complete = False
+                os_processes_available = False
         observed_applications = [
             {"name": row.get("title"), "executable": row.get("executable"), "pid": row.get("pid"), "visible": True}
             for row in visible_windows
@@ -81,6 +89,7 @@ class ContextEngine:
             "managed_processes": managed,
             "os_processes": os_processes,
             "os_processes_available": os_processes_available,
+            "os_processes_complete": os_processes_complete,
             "visible_windows": visible_windows,
             "observed_applications": observed_applications,
             "current_task": self.missions.recent(1),

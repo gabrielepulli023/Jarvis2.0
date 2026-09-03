@@ -23,6 +23,19 @@ class FakeBroker:
 
 
 class ProcessManagerExpandedTests(unittest.TestCase):
+    def test_running_inventory_snapshot_reports_truncation(self):
+        manager = ProcessManager(EventBus())
+
+        class Process:
+            def __init__(self, pid):
+                self.info = {"pid": pid, "name": f"app{pid}.exe", "exe": None}
+
+        with patch("jarvis_core.processes.psutil.process_iter", return_value=[Process(1), Process(2), Process(3)]):
+            partial = manager.running_inventory_snapshot(2)
+        self.assertEqual(len(partial["processes"]), 2)
+        self.assertFalse(partial["complete"])
+        manager.shutdown()
+
     def test_inventory_exposes_resource_and_hierarchy_fields(self):
         manager = ProcessManager(EventBus())
         rows = manager.inventory(10)

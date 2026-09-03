@@ -106,7 +106,7 @@ class WorldModel:
             name: belief for name, belief in value.get("properties", {}).items()
             if not isinstance(belief, Mapping) or belief.get("expires_at") is None or now < float(belief["expires_at"])
         }
-        return value if value["properties"] else None
+        return value if value["properties"] or value.get("last_conflict") else None
 
     def observe(
         self,
@@ -132,6 +132,7 @@ class WorldModel:
         old = self._load(canonical) or {"entity_id": canonical, "entity_type": kind, "properties": {}}
         changed = False
         state_changed = False
+        new_conflict = False
         conflicts = []
         rank = {"mentioned": 1, "intended": 2, "inferred": 3, "observed_perception": 5, "observed_structured": 6, "verified": 7}
         with self._lock:
@@ -156,6 +157,17 @@ class WorldModel:
                     if expires is not None and now >= float(expires):
                         existing = None
                 if existing and existing.get("value") == raw:
+                    existing_rank = rank.get(str(existing.get("evidence_type")), 0)
+                    incoming_rank = rank.get(incoming_type, 0)
+                    existing_confidence = float(existing.get("confidence", 0.0))
+                    existing["updated_at"] = now
+                    existing["expires_at"] = now + max(1.0, float(ttl))
+                    if incoming_rank > existing_rank or confidence > existing_confidence:
+                        existing["confidence"] = max(existing_confidence, confidence)
+                        if incoming_rank >= existing_rank:
+                            existing["source"] = str(source)[:120]
+                            existing["evidence_type"] = incoming_type
+                    changed = True
                     continue
                 if existing and existing.get("value") != raw:
                     old_rank = rank.get(str(existing.get("evidence_type")), 0)
@@ -183,17 +195,18 @@ class WorldModel:
                 if name == "focused" and raw is True and kind in {"application", "window"}:
                     self._clear_other_focus(canonical, now)
             if conflicts:
-                conflict = conflicts[-1]
+                conflict = {"entity_id": canonical, **conflicts[-1], "source": str(source)[:120]}
                 if old.get("last_conflict") != conflict:
                     old["last_conflict"] = conflict
                     changed = True
+                    new_conflict = True
             if changed:
                 old["updated_at"] = now
                 remaining = [float(item.get("expires_at")) - now for item in old["properties"].values() if isinstance(item, Mapping) and item.get("expires_at") is not None]
                 self.working.set(self._key(canonical), old, ttl=max(1.0, max(remaining, default=1.0)), source=source, confidence=confidence)
                 if self.events is not None and state_changed:
                     self.events.publish("world.updated", {"entity_id": canonical, "source": source}, source="world")
-                if self.events is not None and conflicts:
+                if self.events is not None and new_conflict:
                     self.events.publish("world.conflict", {"entity_id": canonical, "conflict": conflicts[-1]}, source="world")
         return deepcopy(old)
 
@@ -244,7 +257,9 @@ class WorldModel:
         snapshot = context_snapshot or {}
         opened_names = set()
         process_rows = snapshot.get("os_processes") if isinstance(snapshot.get("os_processes"), list) else []
-        process_authoritative = bool(snapshot.get("os_processes_available"))
+        # Older callers supplied a complete list without metadata; preserve that
+        # API while ContextEngine now explicitly marks truncated inventories.
+        process_authoritative = bool(snapshot.get("os_processes_available")) and bool(snapshot.get("os_processes_complete", True))
         for row in process_rows:
             if isinstance(row, Mapping) and row.get("name"):
                 opened_names.add(self._app_token(row.get("exe") or row.get("name")))
@@ -289,7 +304,8 @@ class WorldModel:
                 self.observe(f"task:{task['id']}", {key: task.get(key) for key in ("objective", "status", "updated_at")}, source="mission_store", confidence=0.98, evidence_type="observed_structured", ttl=MISSION_TTL)
 
     def get(self, entity_id: str) -> dict[str, Any] | None:
-        return self._load(entity_id)
+        entity = self._load(entity_id)
+        return entity if entity and entity.get("properties") else None
 
     def find(self, entity_type: str | None = None, *, property_name: str | None = None, value: Any = None, limit: int = 32) -> list[dict[str, Any]]:
         rows = []

@@ -88,15 +88,22 @@ class ProcessManager:
 
     def running_inventory(self, limit: int = 300) -> list[dict[str, Any]]:
         """Read only pid/name/exe inventory for lightweight context refreshes."""
+        return self.running_inventory_snapshot(limit)["processes"]
+
+    def running_inventory_snapshot(self, limit: int = 300) -> dict[str, Any]:
+        """Return a bounded process inventory and whether enumeration completed."""
         rows: list[dict[str, Any]] = []
+        cap = max(1, min(int(limit), 1000))
+        complete = True
         for process in psutil.process_iter(("pid", "name", "exe")):
-            if len(rows) >= max(1, min(int(limit), 1000)):
+            if len(rows) >= cap:
+                complete = False
                 break
             try:
                 rows.append({"pid": process.info.get("pid"), "name": process.info.get("name"), "exe": process.info.get("exe")})
             except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-                continue
-        return rows
+                complete = False
+        return {"processes": rows, "complete": complete}
 
     def terminate(self, process_id: str, timeout: float = 3.0) -> bool:
         with self._lock:

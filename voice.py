@@ -650,7 +650,7 @@ def voice_status():
 
 def ascolta(
     timeout_inizio=6.0, stop_event=None, on_voice_start=None, on_voice_end=None, on_partial=None, on_interrupt=None,
-    *, allow_cloud=True,
+    *, allow_cloud=True, on_audio=None,
 ):
     stt_started = time.perf_counter()
     diag_label = _claim_stt_diagnostic()
@@ -801,6 +801,14 @@ def ascolta(
         if not frames_audio:
             print("[DEBUG STT] NESSUN AUDIO RILEVATO")
             return None
+
+        # The selective-attention caller may inspect this one-shot PCM buffer
+        # for local speaker identity.  It is never persisted or sent to STT.
+        if on_audio is not None:
+            try:
+                on_audio(b"".join(frames_audio))
+            except Exception as exc:
+                print("[WARN] verifica speaker non disponibile:", redact(repr(exc)))
 
         local_text = streaming.finish() if streaming else ""
         print(f"[DEBUG STT] Risultato Vosk: {repr(local_text)}")

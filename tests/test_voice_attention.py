@@ -1,9 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 from decision_layer import resolve_control_intent
 from jarvis_core.events import EventBus
 from jarvis_core.state import StateManager
 from jarvis_voice.attention import AttentionController, AttentionState
+from settings_store import get_setting
 
 
 class VoiceAttentionTests(unittest.TestCase):
@@ -48,6 +50,51 @@ class VoiceAttentionTests(unittest.TestCase):
         self.assertTrue(self.attention.accepts("Jarvis").explicit_wake)
         self.attention.wake_from_mute()
         self.assertEqual(self.attention.state, AttentionState.ENGAGED)
+
+    def test_standard_configuration_activates_selective_path(self):
+        self.assertTrue(get_setting("continuous_listening"))
+        self.assertFalse(get_setting("wake_word_only_standby"))
+
+    def test_unverified_permission_session_is_not_speaker_evidence(self):
+        result = self.attention.evaluate("Apri Chrome", owner_speaker=None)
+        self.assertFalse(result.addressed)
+
+    def test_non_owner_and_unknown_are_distinct(self):
+        non_owner = self.attention.evaluate("Apri Chrome", owner_speaker=False)
+        unknown = self.attention.evaluate("Apri Chrome", owner_speaker=None)
+        self.assertIn("unknown_or_non_owner_speaker", non_owner.reasons)
+        self.assertNotIn("unknown_or_non_owner_speaker", unknown.reasons)
+        self.assertFalse(non_owner.addressed)
+        self.assertFalse(unknown.addressed)
+
+    def test_voiceprint_owner_and_other_profile(self):
+        from main import JarvisWorker
+
+        worker = JarvisWorker.__new__(JarvisWorker)
+        pcm = b"\x01\x00" * (16000 // 2)
+        fake_identity = type("Identity", (), {
+            "status": lambda self: {"voice_profiles": ["gabriele", "mamma"]},
+            "recognize_voice_samples": lambda self, *args, **kwargs: {"matched": True, "name": "gabriele"},
+        })()
+        with patch("main.IDENTITY", fake_identity), patch("main.get_setting", side_effect=lambda key, default=None: {
+            "biometric_identity_enabled": True,
+            "voice_match_threshold": .88,
+            "ceo_profile_name": "gabriele",
+        }.get(key, default)):
+            self.assertTrue(worker._owner_speaker_from_audio(pcm))
+            fake_identity.recognize_voice_samples = lambda *args, **kwargs: {"matched": True, "name": "mamma"}
+            self.assertFalse(worker._owner_speaker_from_audio(pcm))
+
+    def test_voiceprint_unavailable_returns_unknown(self):
+        from main import JarvisWorker
+
+        worker = JarvisWorker.__new__(JarvisWorker)
+        class UnavailableIdentity:
+            def status(self):
+                raise RuntimeError("unavailable")
+
+        with patch("main.IDENTITY", UnavailableIdentity()):
+            self.assertIsNone(worker._owner_speaker_from_audio(b"\x01\x00" * 8000))
 
 
 if __name__ == "__main__":

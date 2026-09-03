@@ -11,7 +11,7 @@
   "performance_mode": true,
   "operational_router_always": true,
   "continuous_listening": true,
-  "wake_word_only_standby": true,
+  "wake_word_only_standby": false,
   "noise_reduction": true,
   "auto_start": false,
   "debug_mode": true,

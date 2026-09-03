@@ -25,7 +25,7 @@ DEFAULTS = {
     "performance_mode": True,
     "operational_router_always": True,
     "continuous_listening": True,
-    "wake_word_only_standby": True,
+    "wake_word_only_standby": False,
     "noise_reduction": True,
     "auto_start": False,
     "debug_mode": True,

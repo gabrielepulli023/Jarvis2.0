@@ -117,7 +117,7 @@ GUEST_PROFILE_PERMISSIONS = {
 
 # Caricamento differito: l'HUD compare prima che Vosk, OpenAI e PyAutoGUI
 # terminino l'inizializzazione nel thread di servizio.
-aspetta_avvio = aspetta_jarvis = invia_comando_testo = None
+aspetta_avvio = aspetta_jarvis = invia_comando_testo = recupera_frase_wake = None
 ascolta = parla = richiedi_stop_voce = None
 aggiungi_messaggio = chiedi_jarvis = reset_conversazione = None
 interpreta_comando = conferma_azione = conferma_ultima_azione = None
@@ -125,7 +125,7 @@ _runtime_lock = threading.Lock()
 
 
 def _load_runtime_components():
-    global aspetta_avvio, aspetta_jarvis, invia_comando_testo
+    global aspetta_avvio, aspetta_jarvis, invia_comando_testo, recupera_frase_wake
     global ascolta, parla, richiedi_stop_voce
     global aggiungi_messaggio, chiedi_jarvis, reset_conversazione
     global interpreta_comando, conferma_azione, conferma_ultima_azione
@@ -134,7 +134,12 @@ def _load_runtime_components():
     with _runtime_lock:
         if aspetta_avvio is not None:
             return
-        from wakeword import aspetta_avvio as _avvio, aspetta_jarvis as _jarvis, invia_comando_testo as _invia
+        from wakeword import (
+            aspetta_avvio as _avvio,
+            aspetta_jarvis as _jarvis,
+            invia_comando_testo as _invia,
+            recupera_frase_wake as _recupera_wake,
+        )
         from voice import (
             ascolta as _ascolta,
             parla as _parla,
@@ -148,7 +153,7 @@ def _load_runtime_components():
             conferma_ultima_azione as _conferma_ultima,
         )
 
-        aspetta_avvio, aspetta_jarvis, invia_comando_testo = _avvio, _jarvis, _invia
+        aspetta_avvio, aspetta_jarvis, invia_comando_testo, recupera_frase_wake = _avvio, _jarvis, _invia, _recupera_wake
         ascolta, parla, richiedi_stop_voce = _ascolta, _parla, _stop_voce
         aggiungi_messaggio, chiedi_jarvis, reset_conversazione = _aggiungi, _chiedi, _reset
         interpreta_comando, conferma_azione, conferma_ultima_azione = _interpreta, _conferma, _conferma_ultima
@@ -803,6 +808,7 @@ class JarvisWorker(QThread):
         self._cycle_sequence = 0
         self._active_cycle_id = None
         self._cycle_trace = []
+        self._ambient_speaker = None
         self.attention = AttentionController(CORE_RUNTIME.state)
 
     def _sync_core_state(self, state):
@@ -1833,7 +1839,35 @@ class JarvisWorker(QThread):
     def _voice_ended(self):
         self.stato_assistente.emit("thinking")
 
-    def ciclo_conversazione_vocale(self):
+    def _owner_speaker_from_audio(self, pcm16, sample_rate=16000):
+        """Resolve speaker identity from the just-captured, volatile phrase."""
+        if not bool(get_setting("biometric_identity_enabled", True)):
+            return None
+        if not pcm16 or len(pcm16) < int(sample_rate * 0.45) * 2:
+            return None
+        try:
+            import numpy as np
+
+            samples = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
+            status = IDENTITY.status()
+            if not status.get("voice_profiles"):
+                return None
+            result = IDENTITY.recognize_voice_samples(
+                [samples],
+                sample_rate=sample_rate,
+                threshold=float(get_setting("voice_match_threshold", 0.88)),
+            )
+            if not result.get("matched") or not result.get("name"):
+                return None
+            owner_name = str(get_setting("ceo_profile_name", "")).strip().casefold()
+            return str(result["name"]).strip().casefold() == owner_name if owner_name else None
+        except (RuntimeError, ValueError, OSError, TypeError):
+            return None
+
+    def _capture_ambient_speaker(self, pcm16):
+        self._ambient_speaker = self._owner_speaker_from_audio(pcm16)
+
+    def ciclo_conversazione_vocale(self, richiesta_iniziale=None):
         # La console Windows può usare CP1252: l'emoji rende il ciclo
         # inutilizzabile prima ancora di entrare nel loop vocale.
         print("\n[OK] CONVERSAZIONE CONTINUA ATTIVA")
@@ -1841,6 +1875,15 @@ class JarvisWorker(QThread):
         self.conversazione_vocale_attiva = True
         self.richiesta_fine = False
         self.attention.enter_conversation()
+
+        if richiesta_iniziale:
+            try:
+                self._cycle_transition("STT_DONE")
+                self._cycle_transition("PROCESSING")
+                self.processa_domanda(richiesta_iniziale)
+            except Exception as exc:
+                self._recover_cycle_exception(exc)
+            self._finish_cycle()
 
         while self.running and self.conversazione_vocale_attiva:
             if self._active_cycle_id is None:
@@ -1951,20 +1994,25 @@ class JarvisWorker(QThread):
             ) and self.attention.state is not AttentionState.MUTED
             if selective:
                 self.stato_assistente.emit("standby")
+                self._ambient_speaker = None
                 try:
-                    ambient = ascolta(timeout_inizio=3.0, allow_cloud=False)
+                    ambient = ascolta(
+                        timeout_inizio=3.0,
+                        allow_cloud=False,
+                        on_audio=self._capture_ambient_speaker,
+                    )
                 except Exception as exc:
                     print("\n[WARN] selective listening degradato:", redact(repr(exc)))
                     ambient = None
                 if ambient:
-                    profile = permission_profile() or {}
-                    owner = str(profile.get("role", "")).upper() in {"OWNER", "CEO"}
+                    wake_kind, wake_request = interpreta_richiamo_jarvis(ambient)
                     has_context = bool(self.conversazione_vocale_attiva or self.ultimo_contesto_pc)
                     attention = self.attention.accepts(
                         ambient,
                         conversation_open=self.conversazione_vocale_attiva,
-                        owner_speaker=owner if profile else None,
+                        owner_speaker=self._ambient_speaker,
                         has_context=has_context,
+                        activity_relevant=False,
                     )
                     CORE_RUNTIME.events.publish(
                         "voice.attention_decision",
@@ -1974,11 +2022,18 @@ class JarvisWorker(QThread):
                     )
                     if attention.addressed:
                         self.attention.engage()
-                        self._begin_cycle()
-                        try:
-                            self.processa_domanda(ambient)
-                        finally:
-                            self._finish_cycle()
+                        if wake_kind == "solo":
+                            self._begin_cycle(wake_detected=True)
+                            self.ciclo_conversazione_vocale()
+                        elif wake_kind == "domanda":
+                            self._begin_cycle(wake_detected=True)
+                            self.ciclo_conversazione_vocale(richiesta_iniziale=wake_request)
+                        else:
+                            self._begin_cycle()
+                            try:
+                                self.processa_domanda(ambient)
+                            finally:
+                                self._finish_cycle()
                 continue
 
             self.stato_assistente.emit("standby")
@@ -2021,7 +2076,11 @@ class JarvisWorker(QThread):
             if evento == "jarvis":
                 self.attention.wake_from_mute()
                 self._begin_cycle(wake_detected=True)
-                self.ciclo_conversazione_vocale()
+                wake_phrase = recupera_frase_wake() if recupera_frase_wake else None
+                wake_kind, wake_request = interpreta_richiamo_jarvis(wake_phrase or "Jarvis")
+                self.ciclo_conversazione_vocale(
+                    richiesta_iniziale=wake_request if wake_kind == "domanda" else None
+                )
                 continue
 
         self.arresto.emit()

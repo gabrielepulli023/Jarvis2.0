@@ -22,6 +22,7 @@ command_queue = queue.Queue()
 _recent_audio = deque(maxlen=24)
 _speaker_verifier = None
 _speaker_lock = threading.Lock()
+_last_wake_text = None
 
 
 def set_speaker_verifier(verifier):
@@ -113,6 +114,15 @@ def pulisci_audio():
             break
 
 
+def recupera_frase_wake():
+    """Return and clear the complete local phrase that triggered wake word."""
+    global _last_wake_text
+    with _speaker_lock:
+        value = _last_wake_text
+        _last_wake_text = None
+    return value
+
+
 def leggi_comando():
     try:
         return command_queue.get_nowait()
@@ -167,6 +177,7 @@ def contiene_jarvis(testo):
 
 
 def aspetta_jarvis():
+    global _last_wake_text
     pulisci_audio()
     print('\n🟢 Standby. Di\' "Jarvis"...')
 
@@ -200,6 +211,8 @@ def aspetta_jarvis():
                 if contiene_jarvis(testo):
                     print("\n🎤 JARVIS")
                     if _verify_speaker():
+                        with _speaker_lock:
+                            _last_wake_text = testo
                         return "jarvis"
                     print("Voce non autorizzata: comando ignorato.")
             # Evita falsi risvegli da ipotesi parziali del modello Vosk.

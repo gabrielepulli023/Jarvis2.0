@@ -96,7 +96,7 @@ _ACTION_FAMILIES = {
     "observe": r"guard\w*|osserv\w*|mostr\w*|visualizz\w*",
 }
 _ACTION_RE = re.compile(r"\b(?:" + "|".join(_ACTION_FAMILIES.values()) + r")\b", re.I)
-_EXPLANATION_RE = re.compile(r"\b(?:come\s+si|come\s+faccio|come\s+potrei|mi\s+spiegh\w*|spieg\w*|spiegami|volevo\s+sapere|cosa\s+succede\s+se|[eè]\s+possibile)\b", re.I)
+_EXPLANATION_RE = re.compile(r"\b(?:come\s+si|come\s+faccio|come\s+potrei|come\s+(?:si\s+)?(?:apr\w*|chiud\w*|avvi\w*|lanci\w*)|mi\s+spiegh\w*|spieg\w*|spiegami|volevo\s+sapere|cosa\s+succede\s+se|[eè]\s+possibile)\b", re.I)
 _NEGATION_RE = re.compile(r"\b(?:non|mai|senza)\b", re.I)
 _CAPABILITY_RE = re.compile(r"\b(?:cosa\s+sai\s+fare|quali\s+capacit|hai\s+accesso|puoi\s+(?:usare|controllare|gestire))\b", re.I)
 _COMPOSITE_RE = re.compile(r"\b(?:e\s+poi|poi|quindi|dopo|workflow|progetto\s+completo|passo\s+passo|tutto)\b", re.I)
@@ -112,6 +112,24 @@ def _normalize(value: Any) -> str:
 
 def _stem(token: str) -> str:
     return token[: max(4, min(7, len(token)))]
+
+
+_APP_ACTION_RE = re.compile(r"\b(?:apr\w*|avvi\w*|lanci\w*|chiud\w*|termin\w*)\b", re.I)
+_TARGET_WRAPPER_RE = re.compile(r"^(?:il|lo|la|i|gli|le|un|una|uno)\s+", re.I)
+
+
+def _extract_application_target(text: str) -> str | None:
+    """Extract a generic app name after an explicit open/close verb."""
+    match = _APP_ACTION_RE.search(text)
+    if not match:
+        return None
+    candidate = text[match.end():].strip(" \t.,!?;:")
+    candidate = re.sub(r"^(?:mi|m[iì]|per\s+favore)\s+", "", candidate, flags=re.I)
+    candidate = _TARGET_WRAPPER_RE.sub("", candidate).strip(" \t.,!?;:")
+    candidate = re.sub(r"\s+per\s+favore$", "", candidate, flags=re.I).strip(" \t.,!?;:")
+    if not candidate or len(candidate) > 120 or re.search(r"\b(?:come|perch[eé]|cosa|se|spiegami|potresti|puoi)\b", candidate, re.I):
+        return None
+    return candidate
 
 
 class UnifiedCognitiveCore:
@@ -173,6 +191,8 @@ class UnifiedCognitiveCore:
             return "system"
         if target and re.search(r"\b(?:chrome|spotify|firefox|edge|youtube|google|blocco note|calcolatrice|qdrant)\b", target, re.I):
             return "application"
+        if target and action in {"open", "close"}:
+            return "application"
         return "generic" if target else None
 
     def _world_support(self, target: str | None, target_type: str | None, action: str | None) -> dict[str, Any]:
@@ -215,6 +235,10 @@ class UnifiedCognitiveCore:
         capability_request = capability and bool(re.search(r"\b(?:puoi\s+usare|hai\s+accesso|cosa\s+sai\s+fare|quali\s+capacit)\b", text, re.I))
         statement = bool(re.match(r"^(?:ho|hai|abbiamo|hanno|sto|stavo|vorrei sapere)\b", text, re.I))
         target = self._reference_target(reference)
+        question = text.endswith("?")
+        informative = explanation or statement or (question and not capability and not action)
+        if not target and action in {"open", "close"} and not informative and not negated:
+            target = _extract_application_target(text)
         if not target and action:
             target_match = re.search(r"(?:[A-Za-z]:[\\/][^\s,?]+|\b[\w.-]+\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b|\b(?:Chrome|Spotify|Firefox|Edge|YouTube|Google|Qdrant|Keyring|Blocco Note|calcolatrice|file|cartella|computer|PC|documento|messaggio|video|segreto|password)\b)", text, re.I)
             target = target_match.group(0) if target_match else None
@@ -230,7 +254,6 @@ class UnifiedCognitiveCore:
         top_score = ranked[0][1] if ranked else (0.92 if action else 0.0)
         alternatives = tuple(name for name, score in ranked[1:3] if top_score - score < 0.12)
         ambiguous = bool(alternatives and top_score - ranked[1][1] < 0.08)
-        informative = explanation or statement or (text.endswith("?") and not capability and not action)
         mission = self._mission_required(text, action, informative=informative)
         composite = bool(mission)
         if capability_request:
@@ -288,7 +311,7 @@ class UnifiedCognitiveCore:
 def mission_required(text: str) -> bool:
     value = " ".join(str(text or "").split())
     action = _ACTION_RE.search(value)
-    informative = bool(_EXPLANATION_RE.search(value) or value.endswith("?"))
+    informative = bool(_EXPLANATION_RE.search(value) or (value.endswith("?") and not action))
     return UnifiedCognitiveCore._mission_required(value, action.group(0) if action else None, informative=informative)
 
 

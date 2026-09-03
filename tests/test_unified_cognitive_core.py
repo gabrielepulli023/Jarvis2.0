@@ -23,6 +23,26 @@ class UnifiedCognitiveCoreTests(unittest.TestCase):
         for text in ("Come si chiude Chrome?", "Puoi spiegarmi come chiudere Chrome?", "Volevo sapere come aprire Chrome", "Cosa succede se chiudo Chrome?"):
             self.assertEqual(self.core.decide(text).intent_kind, IntentKind.INFORMATION)
 
+    def test_generic_application_targets_are_not_whitelist_bound(self):
+        for text, target in (
+            ("Apri Discord", "Discord"),
+            ("Mi apri Telegram?", "Telegram"),
+            ("Apri Visual Studio Code", "Visual Studio Code"),
+            ("Avvia Steam", "Steam"),
+            ("Lancia OBS Studio", "OBS Studio"),
+            ("Chiudi OBS Studio", "OBS Studio"),
+        ):
+            with self.subTest(text=text):
+                decision = self.core.decide(text)
+                self.assertEqual(decision.target, target)
+                self.assertEqual(decision.target_type, "application")
+                self.assertTrue(decision.needs_tools)
+        for text in ("Come apro Discord?", "Come si chiude Visual Studio Code?", "Non aprire Discord"):
+            with self.subTest(text=text):
+                decision = self.core.decide(text)
+                self.assertFalse(decision.needs_tools)
+                self.assertEqual(decision.intent_kind, IntentKind.INFORMATION)
+
     def test_negation_and_mission_detection(self):
         denied = self.core.decide("Non chiudere Chrome")
         self.assertTrue(denied.negated)
@@ -61,6 +81,14 @@ class UnifiedCognitiveCoreTests(unittest.TestCase):
         with patch("provider_router.decide_intent") as classifier:
             self.assertEqual(classify_task("testo non operativo", decision), "tool_execution")
         classifier.assert_not_called()
+
+    def test_operational_provider_decision_precedes_summarization(self):
+        from provider_router import classify_task
+
+        text = "Apri il documento, leggilo e riassumilo"
+        decision = self.core.decide(text)
+        self.assertEqual(classify_task(text, decision), "tool_execution")
+        self.assertEqual(classify_task("Riassumi questo documento", self.core.decide("Riassumi questo documento")), "summarization")
 
     def test_processa_domanda_reuses_one_operational_decision(self):
         import main
@@ -118,6 +146,20 @@ class UnifiedCognitiveCoreTests(unittest.TestCase):
         fast.assert_not_called()
         expansion.assert_not_called()
         execute.assert_not_called()
+
+    def test_brain_reaches_fast_path_for_generic_application(self):
+        import brain
+
+        decision = self.core.decide("Apri Discord")
+        fast_result = (True, "Discord aperto", False)
+        with patch.object(brain, "_interpreta_comando_locale", return_value=fast_result) as fast, \
+             patch.object(brain, "_interpreta_expansion_deterministica") as expansion, \
+             patch.object(brain.CORE_RUNTIME.cognition, "decide") as classifier:
+            result = brain.interpreta_comando("Apri Discord", cognitive_decision=decision)
+        self.assertEqual(result, fast_result)
+        fast.assert_called_once()
+        expansion.assert_not_called()
+        classifier.assert_not_called()
 
     def test_supplied_non_operational_decision_cannot_be_upgraded_by_expansion(self):
         import main

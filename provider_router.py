@@ -68,13 +68,16 @@ def classify_task(text: str, cognitive_decision=None) -> str:
     value = str(text or "").lower()
     # Summarization of a long document is a conversational workload even when
     # the Italian wording starts with the operational verb "analizza".
-    if any(word in value for word in _SUMMARIZATION):
-        return "summarization"
-    if cognitive_decision is None and any(word in value for word in _CODING):
-        return "coding"
+    if cognitive_decision is None:
+        if any(word in value for word in _SUMMARIZATION):
+            return "summarization"
+        if any(word in value for word in _CODING):
+            return "coding"
     intent = cognitive_decision or decide_intent(text)
     if intent.kind.value in {"operation", "composite", "control"}:
         return "tool_execution"
+    if any(word in value for word in _SUMMARIZATION):
+        return "summarization"
     if intent.kind.value == "capability":
         return "conversation"
     if any(word in value for word in _CODING):

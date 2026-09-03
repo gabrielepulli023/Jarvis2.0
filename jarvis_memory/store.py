@@ -51,13 +51,42 @@ def _cosine(left, right):
 
 
 class WorkingMemory:
-    def __init__(self):
+    DEFAULT_MAX_ENTRIES = 512
+
+    def __init__(self, max_entries: int = DEFAULT_MAX_ENTRIES):
         self._values = {}
         self._lock = threading.RLock()
+        self.max_entries = max(16, int(max_entries))
+        self._metadata = {}
 
-    def set(self, key: str, value, ttl: float | None = None) -> None:
+    def _purge_expired(self, now: float | None = None) -> int:
+        now = time.monotonic() if now is None else now
+        expired = [key for key, (_, expires_at) in self._values.items() if expires_at is not None and now >= expires_at]
+        for key in expired:
+            self._values.pop(key, None)
+            self._metadata.pop(key, None)
+        return len(expired)
+
+    def _evict_if_needed(self) -> None:
+        while len(self._values) > self.max_entries:
+            oldest = min(self._metadata, key=lambda key: (self._metadata[key]["updated_at"], str(key)))
+            self._values.pop(oldest, None)
+            self._metadata.pop(oldest, None)
+
+    def set(self, key: str, value, ttl: float | None = None, *, source: str | None = None, confidence: float | None = None) -> None:
         with self._lock:
-            self._values[key] = (deepcopy(value), None if ttl is None else time.monotonic() + max(0, ttl))
+            now = time.monotonic()
+            expires_at = None if ttl is None else now + max(0, ttl)
+            self._values[key] = (deepcopy(value), expires_at)
+            self._metadata[key] = {
+                "created_at": self._metadata.get(key, {}).get("created_at", now),
+                "updated_at": now,
+                "expires_at": expires_at,
+                "source": source,
+                "confidence": confidence,
+            }
+            self._purge_expired(now)
+            self._evict_if_needed()
 
     def get(self, key: str, default=None):
         with self._lock:
@@ -66,12 +95,57 @@ class WorkingMemory:
                 return deepcopy(default)
             if item[1] is not None and time.monotonic() >= item[1]:
                 self._values.pop(key, None)
+                self._metadata.pop(key, None)
                 return deepcopy(default)
             return deepcopy(item[0])
 
     def clear(self) -> None:
         with self._lock:
             self._values.clear()
+            self._metadata.clear()
+
+    def delete(self, key: str) -> bool:
+        with self._lock:
+            existed = key in self._values
+            self._values.pop(key, None)
+            self._metadata.pop(key, None)
+            return existed
+
+    def clear_prefix(self, prefix: str) -> int:
+        with self._lock:
+            keys = [key for key in self._values if str(key).startswith(str(prefix))]
+            for key in keys:
+                self._values.pop(key, None)
+                self._metadata.pop(key, None)
+            return len(keys)
+
+    def contains(self, key: str) -> bool:
+        with self._lock:
+            item = self._values.get(key)
+            if item is None:
+                return False
+            if item[1] is not None and time.monotonic() >= item[1]:
+                self._values.pop(key, None)
+                self._metadata.pop(key, None)
+                return False
+            return True
+
+    def namespace(self, prefix: str) -> dict:
+        prefix = str(prefix)
+        return {key: value for key, value in self.snapshot().items() if str(key).startswith(prefix)}
+
+    def inspect(self, key: str) -> dict | None:
+        with self._lock:
+            self._purge_expired()
+            metadata = self._metadata.get(key)
+            if metadata is None:
+                return None
+            return deepcopy(metadata)
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            self._purge_expired()
+            return {"entries": len(self._values), "max_entries": self.max_entries}
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -80,6 +154,7 @@ class WorkingMemory:
             for key, (value, expires_at) in list(self._values.items()):
                 if expires_at is not None and now >= expires_at:
                     self._values.pop(key, None)
+                    self._metadata.pop(key, None)
                     continue
                 snapshot[key] = deepcopy(value)
             return snapshot

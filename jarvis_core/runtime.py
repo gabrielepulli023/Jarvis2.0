@@ -55,6 +55,7 @@ from jarvis_system import (
 from jarvis_vault import CredentialVault
 from dataclasses import asdict
 from audit_log import recent as recent_audit, record_action
+from .world_model import WorldModel
 import sys
 import time
 
@@ -166,12 +167,13 @@ class CoreRuntime:
         self.expansion = ExpansionClient(integration_root)
         register_expansion_skills(self.skills, self.expansion, self.local_services.wait_ready)
         self.memory = MemoryStore(data_path("jarvis_memory.db"))
+        self.world = WorldModel(self.memory.working, events=self.events)
         self.mission_store = MissionStore(data_path("missions") / "missions.db")
         self.missions = MissionEngine(
             self.mission_store, memory=self.memory, recovery=self.recovery, authorize=self._authorize_mission
         )
         self.context = ContextEngine(
-            self.events, self.state, self.processes, self.memory, self.mission_store, self.windows
+            self.events, self.state, self.processes, self.memory, self.mission_store, self.windows, world=self.world
         )
         self.automation = AutomationEngine(data_path("automation") / "automation.db", self._dispatch_automation)
         self.automation.bind(self.events)
@@ -843,6 +845,8 @@ class CoreRuntime:
         )
         self.perception = PerceptionEngine()
         configure_default_observers(self.perception)
+        self.world.bind_context(self.context)
+        self.world.bind_perception(self.perception)
         self.actions = VerifiedActionRunner(self.perception)
         self.watchdog = Watchdog(self.health)
         self.watchdog.register(
@@ -941,6 +945,7 @@ class CoreRuntime:
             ("hardware", self.hardware_events.stop),
             ("windows_ui", self.windows_ui.close),
             ("context", self.context.close),
+            ("world", self.world.close),
             ("plugins", self.plugins.close),
             ("companion", self.companion.stop),
             ("filesystem_watchers", self.filesystem_watchers.shutdown),

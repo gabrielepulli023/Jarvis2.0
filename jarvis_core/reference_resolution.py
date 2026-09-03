@@ -94,6 +94,13 @@ def record_user_turn(runtime, text: str) -> None:
     if candidates:
         _set(runtime, "conversation.references", candidates, ttl=REFERENCE_TTL)
         _set(runtime, "conversation.entities", [row["name"] for row in candidates], ttl=CONVERSATION_TTL)
+        world = getattr(runtime, "world", None)
+        if world is not None:
+            for candidate in candidates:
+                try:
+                    world.mention(candidate["name"], candidate["type"])
+                except Exception:
+                    pass
     elif _WHY.match(value) or _CONTINUE.match(value):
         _set(runtime, "conversation.pending_question", value, ttl=REFERENCE_TTL)
     if re.fullmatch(r"(?:no|lascia stare|non farlo|annulla)\W*", value, re.I):
@@ -244,6 +251,21 @@ class ReferenceResolver:
                 return ReferenceResolution(True, str(refs[0].get("type") or "entity"), refs[0], .86, "working_memory")
             if len(refs) > 1:
                 return self._ambiguous(refs)
+            world = getattr(self.runtime, "world", None)
+            if world is not None:
+                try:
+                    observed = world.find("application", property_name="running", value=True, limit=8)
+                    candidates = [
+                        {"type": "application", "name": str(row.get("entity_id", "")).split(":", 1)[-1]}
+                        for row in observed
+                        if ":" in str(row.get("entity_id", ""))
+                    ]
+                    if len(candidates) == 1:
+                        return ReferenceResolution(True, "application", candidates[0], .83, "world_model")
+                    if len(candidates) > 1:
+                        return self._ambiguous(candidates)
+                except Exception:
+                    pass
             snapshot = getattr(getattr(self.runtime, "context", None), "snapshot", lambda: {})()
             opened = snapshot.get("opened_apps", []) if isinstance(snapshot, Mapping) else []
             candidates = [
@@ -286,6 +308,14 @@ def compact_current_context(runtime, *, max_chars: int = 1800) -> str:
         artifact = operational.get("artifact_path") or operational.get("source_path")
         if artifact:
             rows.append(f"- risultato operativo verificato: {_clean(artifact, 300)}")
+    world = getattr(runtime, "world", None)
+    if world is not None:
+        try:
+            world_text = world.compact(max_chars=700)
+            if world_text and world_text != "World state:\n":
+                rows.append(world_text)
+        except Exception:
+            pass
     context = getattr(runtime, "context", None)
     snapshot = context.snapshot() if callable(getattr(context, "snapshot", None)) else {}
     active = snapshot.get("active_window") if isinstance(snapshot, Mapping) else None

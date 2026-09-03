@@ -10,13 +10,14 @@ from jarvis_core.reference_resolution import conversation_snapshot
 class ContextEngine:
     """Event-fed, bounded, read-only view of the user's current operating context."""
 
-    def __init__(self, events, state, processes, memory, missions, windows=None, history_limit: int = 64):
+    def __init__(self, events, state, processes, memory, missions, windows=None, history_limit: int = 64, world=None):
         self.events = events
         self.state = state
         self.processes = processes
         self.memory = memory
         self.missions = missions
         self.windows = windows
+        self.world = world
         self._lock = threading.RLock()
         self._events: deque[dict[str, Any]] = deque(maxlen=max(16, int(history_limit)))
         # Short-lived hand-off for real tool results.  It is intentionally
@@ -44,7 +45,7 @@ class ContextEngine:
             for key, value in dict(payload or {}).items()
         }
 
-    def snapshot(self) -> dict:
+    def _base_snapshot(self) -> dict:
         active = None
         if self.windows is not None:
             try:
@@ -70,8 +71,24 @@ class ContextEngine:
             "recent_events": events,
         }
 
+    def snapshot(self, *, include_world: bool = True) -> dict:
+        snapshot = self._base_snapshot()
+        if include_world and self.world is not None:
+            try:
+                self.world.refresh(snapshot)
+                snapshot["world"] = self.world.snapshot()
+            except Exception:
+                snapshot["world"] = {"entities": [], "degraded": True}
+        return snapshot
+
     def record_operational_result(self, tool: str, result: dict | None, arguments: dict | None = None) -> dict:
-        return self.operational.record(tool, result, arguments)
+        row = self.operational.record(tool, result, arguments)
+        if self.world is not None:
+            try:
+                self.world.observe_tool(tool, result, arguments)
+            except Exception:
+                pass
+        return row
 
     def operational_context(self) -> dict | None:
         return self.operational.current()

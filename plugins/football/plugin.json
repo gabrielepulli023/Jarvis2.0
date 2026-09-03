@@ -1,0 +1,14 @@
+{
+  "name": "football",
+  "version": "1.0.0",
+  "permissions": ["BROWSER_CONTROL", "READ_SCREEN"],
+  "tools": [
+    {
+      "name": "analyze",
+      "skill": "football.analyze",
+      "permissions": ["BROWSER_CONTROL"],
+      "risk": "safe"
+    }
+  ],
+  "events": ["context.active_window", "browser.changed"]
+}

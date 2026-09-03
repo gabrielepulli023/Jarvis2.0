@@ -1,0 +1,1 @@
+{"name":"spotify","version":"1.0.0","permissions":["PROCESS_CONTROL"],"tools":[{"name":"open","skill":"applications.open","permissions":["PROCESS_CONTROL"],"risk":"safe"},{"name":"close","skill":"applications.close","permissions":["PROCESS_CONTROL"],"risk":"sensitive"}],"events":["process.started","process.exited"]}

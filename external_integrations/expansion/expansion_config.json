@@ -1,0 +1,30 @@
+{
+    "screenpipe_url":  "http://127.0.0.1:3030",
+    "home_assistant_url":  "http://homeassistant.local:8123",
+    "ollama_url":  "http://127.0.0.1:11434",
+    "llamacpp_url":  "http://127.0.0.1:8080",
+    "searxng_url":  "http://127.0.0.1:8088",
+    "watchdog_enabled":  true,
+    "watchdog_paths":  [
+                           "~/Desktop",
+                           "~/Documents",
+                           "~/Downloads"
+                       ],
+    "qdrant_model":  "sentence-transformers/all-MiniLM-L6-v2",
+    "opentelemetry_service_name":  "jarvis-expansion",
+    "mcp_servers":  {
+                        "jarvis_test":  {
+                                            "transport":  "stdio",
+                                            "command":  "C:\\Users\\gabri\\Desktop\\Jarvis2.0\\external_integrations\\expansion\\.expansion-env\\Scripts\\python.exe",
+                                            "args":  [
+                                                         "C:\\Users\\gabri\\Desktop\\Jarvis2.0\\external_integrations\\expansion\\mcp_test_server.py"
+                                                     ],
+                                            "env":  {
+
+                                                    }
+                                        }
+                    },
+    "esphome_devices":  {
+
+                        }
+}

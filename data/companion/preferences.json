@@ -1,0 +1,23 @@
+{
+  "config": {
+    "enabled": true,
+    "mode": "normal",
+    "coding_enabled": false,
+    "trading_enabled": false,
+    "speak_threshold": 0.8,
+    "hud_threshold": 0.6,
+    "minimum_confidence": 0.7,
+    "duplicate_cooldown_seconds": 900.0,
+    "budget_capacity": 2.0,
+    "budget_recovery_per_hour": 1.0,
+    "weights": {
+      "importance": 0.3,
+      "confidence": 0.25,
+      "relevance": 0.2,
+      "novelty": 0.15,
+      "social_value": 0.05,
+      "urgency": 0.15,
+      "interruption_cost": -0.2
+    }
+  }
+}

@@ -1,0 +1,283 @@
+# ============================================================
+# JARVIS 2.0 - .gitignore
+# ============================================================
+
+# ------------------------------------------------------------
+# PYTHON VIRTUAL ENVIRONMENTS
+# ------------------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+
+.runtime-env/
+.build-env/
+.build-env-current/
+
+**/venv/
+**/.venv/
+**/env/
+**/.runtime-env/
+**/.build-env/
+**/.build-env-current/
+
+# External integrations environments
+**/.ufo-env/
+**/.expansion-env/
+**/.browser-use-env/
+
+# ------------------------------------------------------------
+# PYTHON CACHE
+# ------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+
+.pytest_cache/
+**/.pytest_cache/
+
+.mypy_cache/
+**/.mypy_cache/
+
+.ruff_cache/
+**/.ruff_cache/
+
+.uv-cache/
+**/.uv-cache/
+
+.cache/
+**/.cache/
+
+# ------------------------------------------------------------
+# BUILD / DISTRIBUTION OUTPUT
+# ------------------------------------------------------------
+build/
+dist/
+
+build_*/
+dist_*/
+
+**/build/
+**/dist/
+
+**/build_*/
+**/dist_*/
+
+# PyInstaller generated specification files
+*.spec
+
+# ------------------------------------------------------------
+# NODE / JAVASCRIPT DEPENDENCIES
+# ------------------------------------------------------------
+node_modules/
+**/node_modules/
+
+.npm/
+.yarn/
+.pnpm-store/
+
+# ------------------------------------------------------------
+# LOGS
+# ------------------------------------------------------------
+logs/
+**/logs/
+
+*.log
+
+# ------------------------------------------------------------
+# TEMPORARY FILES
+# ------------------------------------------------------------
+temp/
+tmp/
+
+**/temp/
+**/tmp/
+
+*.tmp
+*.temp
+*.bak
+*.old
+*.swp
+*.swo
+
+# ------------------------------------------------------------
+# IDE / EDITORS
+# ------------------------------------------------------------
+.vscode/
+.idea/
+
+*.code-workspace
+
+# ------------------------------------------------------------
+# WINDOWS / OS FILES
+# ------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ------------------------------------------------------------
+# ARCHIVES
+# ------------------------------------------------------------
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.tgz
+
+# ------------------------------------------------------------
+# SECRETS / API KEYS / CREDENTIALS
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+credentials.json
+secrets.json
+
+service_account.json
+service-account.json
+client_secret.json
+client_secrets.json
+
+# ------------------------------------------------------------
+# DATABASE TEMPORARY FILES
+# ------------------------------------------------------------
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# IMPORTANT:
+# .db e .sqlite NON vengono esclusi automaticamente
+# perché JARVIS potrebbe contenere database persistenti utili.
+
+# ------------------------------------------------------------
+# TEST / COVERAGE OUTPUT
+# ------------------------------------------------------------
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ------------------------------------------------------------
+# PYTHON PACKAGING
+# ------------------------------------------------------------
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ------------------------------------------------------------
+# LOCAL PYTHON CONFIG
+# ------------------------------------------------------------
+.python-version
+
+# ------------------------------------------------------------
+# COMPILED / GENERATED BINARIES
+# ------------------------------------------------------------
+*.dll
+*.pdb
+*.exe
+*.msi
+
+# ------------------------------------------------------------
+# JARVIS GENERATED RELEASES
+# ------------------------------------------------------------
+dist_asset_orb_release_*/
+dist_j2_*/
+dist_reference_exact_release_*/
+dist_hud_*/
+dist_safe_recovery_*/
+dist_opengl_*/
+dist_orb3d_*/
+dist_visual_release_*/
+
+build_j2_*/
+build_hud_*/
+build_asset_orb_release_*/
+build_safe_recovery_*/
+build_visual_release_*/
+build_reference_exact_release_*/
+build_opengl_*/
+build_orb3d_release_*/
+
+# ------------------------------------------------------------
+# JARVIS LOCAL RUNTIME DATA
+# ------------------------------------------------------------
+
+# Profilo Chrome locale usato da JARVIS.
+# Contiene cache, sessioni, cookie, storage e altri dati runtime.
+data/browser/chrome-profile/
+
+# Audio temporaneo / registrazioni locali
+input.wav
+barge_input.wav
+
+# ------------------------------------------------------------
+# EMBEDDED REPOSITORIES
+# ------------------------------------------------------------
+
+# Backup locale della cartella .git originale di UFO.
+# Rimane sul PC ma non viene inserita nel repository principale.
+**/.git-ufo-backup/
+
+# ------------------------------------------------------------
+# KEEP IMPORTANT JARVIS SOURCE DIRECTORIES
+# ------------------------------------------------------------
+# Le directory seguenti NON sono ignorate intenzionalmente.
+# Devono essere incluse nel repository principale:
+#
+# jarvis_core/
+# jarvis_skills/
+# jarvis_memory/
+# jarvis_terminal/
+# jarvis_system/
+# jarvis_perception/
+# jarvis_missions/
+# jarvis_search/
+# jarvis_plugins/
+# jarvis_voice/
+# jarvis_vault/
+# jarvis_windows/
+# jarvis_integrations/
+# jarvis_automation/
+# jarvis_apps/
+# jarvis_files/
+# jarvis_expansion/
+# jarvis_identity/
+# jarvis_hud/
+# jarvis_developer/
+# jarvis_browser/
+# jarvis_broker/
+# jarvis_companion/
+#
+# hud_ui/
+# config/
+# docs/
+# tests/
+# tools/
+# installer/
+# plugins/
+# chrome_extension/
+# pyinstaller_hooks/
+#
+# external_integrations/
+# data/
+# model-it/
+# assets/
+# diagnostics/
+# backups/
+#
+# Queste directory rimangono incluse finché non vengono
+# analizzate individualmente.

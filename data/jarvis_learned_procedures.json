@@ -1,0 +1,52 @@
+{
+  "ce8557e78535": {
+    "signature": "ce8557e78535",
+    "uses": 69,
+    "sequence": [
+      {
+        "tool": "apri_programma",
+        "arguments": {
+          "nome": "Chrome"
+        }
+      },
+      {
+        "tool": "apri_sito",
+        "arguments": {
+          "nome": "YouTube"
+        }
+      }
+    ],
+    "examples": [
+      "Apri Chrome e vai su YouTube",
+      "Apri Chrome e vai su YouTube",
+      "Apri Chrome e vai su YouTube",
+      "Apri Chrome e vai su YouTube",
+      "Apri Chrome e vai su YouTube"
+    ],
+    "last_success": "2026-08-19T16:53:47.332936+00:00",
+    "ready_as_skill": true
+  },
+  "5e730a360862": {
+    "signature": "5e730a360862",
+    "uses": 1,
+    "sequence": [
+      {
+        "tool": "apri_programma",
+        "arguments": {
+          "nome": "Chrome"
+        }
+      },
+      {
+        "tool": "cerca_google",
+        "arguments": {
+          "query": "Tlauncher"
+        }
+      }
+    ],
+    "examples": [
+      "apri chrome e cerca Tlauncher"
+    ],
+    "last_success": "2026-09-01T20:32:37.377389+00:00",
+    "ready_as_skill": false
+  }
+}

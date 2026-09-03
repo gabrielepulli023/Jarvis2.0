@@ -1,0 +1,1 @@
+{"name":"tradingview","version":"1.0.0","permissions":["BROWSER_CONTROL","READ_SCREEN"],"tools":[{"name":"snapshot","skill":"tradingview.snapshot","permissions":["BROWSER_CONTROL"],"risk":"safe"},{"name":"analyze","skill":"tradingview.analyze","permissions":["READ_SCREEN"],"risk":"safe"}],"events":["context.active_window"]}

@@ -1,0 +1,22 @@
+{
+  "voice_rate": 0,
+  "voice_volume": 0,
+  "mic_device": null,
+  "output_device": null,
+  "mic_sensitivity": 100,
+  "vad_mode": 3,
+  "silence_ms": 540,
+  "continuous_listening": true,
+  "noise_reduction": true,
+  "auto_start": false,
+  "debug_mode": true,
+  "theme": "Reattore Arc",
+  "animations_enabled": true,
+  "market_refresh_seconds": 60,
+  "market_interval": "5m",
+  "ai_model": "gpt-5.6-luna",
+  "ai_verbosity": "low",
+  "ai_memory": true,
+  "compact_mode": false,
+  "market_watchlist": null
+}

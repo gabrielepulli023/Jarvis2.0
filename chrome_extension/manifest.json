@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "JARVIS Desktop Bridge",
+  "version": "1.0.0",
+  "description": "Collega in locale la scheda Chrome attiva a JARVIS.",
+  "permissions": ["tabs", "scripting", "alarms", "downloads"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1:8765/*"],
+  "background": {"service_worker": "service_worker.js"},
+  "action": {"default_title": "JARVIS Desktop Bridge"}
+}

@@ -1,0 +1,28 @@
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+exclude = '/(\.runtime-env|\.build-env.*|\.python|venv|build|dist.*|backups|data|\.uv-cache|\.pytest_cache|\.mypy_cache|\.ruff_cache|tmpvs16jkh3|jarvis_tts_[^/]+)/'
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = [".runtime-env", ".build-env", ".build-env-current", ".python", "venv", "build", "dist", "dist_reference", "dist_reference_final", "dist_reference_v2", "backups", "data", ".uv-cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", "tmpvs16jkh3", "jarvis_tts_9ajs6sxb", "jarvis_tts_lru_a8fkg6li", "jarvis_tts_small_6iiehogn"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = ["E701", "E702"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["llm_gateway.py", "jarvis_entry.py", "football_analyst.py", "jarvis_core", "jarvis_apps", "jarvis_system", "jarvis_terminal", "jarvis_vault", "jarvis_plugins", "jarvis_browser", "jarvis_automation", "jarvis_companion", "jarvis_windows", "jarvis_files", "jarvis_missions", "jarvis_memory", "jarvis_perception", "jarvis_skills", "jarvis_integrations"]
+follow_imports = "skip"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = '(\.runtime-env|\.build-env.*|\.python|venv|build|dist.*|backups|data)/'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"

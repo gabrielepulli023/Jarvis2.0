@@ -1,0 +1,103 @@
+{
+  "created_utc": "2026-08-19T13:04:54.758444+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "audio_input",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_output",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_sample",
+      "status": "SKIP",
+      "detail": "Consenso non richiesto",
+      "evidence": {}
+    },
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "desktop_uia",
+      "status": "FAIL",
+      "detail": "Testo inserito.",
+      "evidence": {
+        "hwnd": 917660
+      }
+    },
+    {
+      "gate": "calculator_uia",
+      "status": "PASS",
+      "detail": "6 controlli UIA",
+      "evidence": {
+        "hwnd": 655660
+      }
+    },
+    {
+      "gate": "file_explorer_uia",
+      "status": "PASS",
+      "detail": "149 controlli UIA",
+      "evidence": {
+        "hwnd": 460034
+      }
+    },
+    {
+      "gate": "multi_monitor",
+      "status": "SKIP",
+      "detail": "Un solo monitor",
+      "evidence": {}
+    },
+    {
+      "gate": "admin_broker",
+      "status": "FAIL",
+      "detail": "exit=3",
+      "evidence": {
+        "broker": {
+          "preexisting": false,
+          "queries": {
+            "driver.list": {
+              "duration_seconds": 0.25,
+              "error": null,
+              "exit_code": 0,
+              "stdout_chars": 12000,
+              "success": true
+            },
+            "system.info": {
+              "duration_seconds": 3.796,
+              "error": "TypeError",
+              "exit_code": null,
+              "stdout_chars": 0,
+              "success": false
+            },
+            "winget.list": {
+              "duration_seconds": 3.547,
+              "error": null,
+              "exit_code": 2316632134,
+              "stdout_chars": 479,
+              "success": false
+            }
+          },
+          "success": false
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"name":"vscode","version":"1.0.0","permissions":["PROCESS_CONTROL","READ_FILES"],"tools":[{"name":"open_project","skill":"vscode.open_project","permissions":["PROCESS_CONTROL","READ_FILES"],"risk":"safe"}],"events":["process.started","task.failed"]}

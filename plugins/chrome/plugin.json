@@ -1,0 +1,1 @@
+{"name":"chrome","version":"1.0.0","permissions":["BROWSER_CONTROL"],"tools":[{"name":"snapshot","skill":"browser.snapshot","permissions":["BROWSER_CONTROL"],"risk":"safe"},{"name":"dom","skill":"browser.dom","permissions":["BROWSER_CONTROL"],"risk":"safe"}],"events":["browser.changed","download.completed"]}

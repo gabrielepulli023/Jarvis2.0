@@ -1,0 +1,1 @@
+{"watchdog_enabled":true,"watchdog_interval":2.0,"safe_mode":{"chat":true,"diagnostics":true,"desktop":false,"writes":false,"terminal":false}}

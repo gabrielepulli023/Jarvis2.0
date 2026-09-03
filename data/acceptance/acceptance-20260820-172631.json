@@ -1,0 +1,69 @@
+{
+  "created_utc": "2026-08-20T15:26:31.290661+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "audio_input",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_output",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_sample",
+      "status": "SKIP",
+      "detail": "Consenso non richiesto",
+      "evidence": {}
+    },
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "desktop_uia",
+      "status": "PASS",
+      "detail": "Testo inserito.",
+      "evidence": {
+        "hwnd": 9897414
+      }
+    },
+    {
+      "gate": "calculator_uia",
+      "status": "PASS",
+      "detail": "6 controlli UIA",
+      "evidence": {
+        "hwnd": 2098628
+      }
+    },
+    {
+      "gate": "file_explorer_uia",
+      "status": "PASS",
+      "detail": "149 controlli UIA",
+      "evidence": {
+        "hwnd": 263582
+      }
+    },
+    {
+      "gate": "multi_monitor",
+      "status": "SKIP",
+      "detail": "Un solo monitor",
+      "evidence": {}
+    }
+  ]
+}

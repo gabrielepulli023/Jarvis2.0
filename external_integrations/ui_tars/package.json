@@ -1,0 +1,10 @@
+{
+  "name": "jarvis-ui-tars-bridge",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@ui-tars/sdk": "1.2.3",
+    "@ui-tars/operator-nut-js": "1.2.3"
+  }
+}

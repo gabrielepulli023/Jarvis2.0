@@ -1,0 +1,35 @@
+{
+  "created_utc": "2026-08-18T21:45:10.352398+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "desktop_uia",
+      "status": "FAIL",
+      "detail": "Nessun controllo ValuePattern",
+      "evidence": {
+        "hwnd": 17040804
+      }
+    },
+    {
+      "gate": "multi_monitor",
+      "status": "SKIP",
+      "detail": "Un solo monitor",
+      "evidence": {}
+    }
+  ]
+}

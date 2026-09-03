@@ -1,0 +1,1 @@
+{"voice":{"queue_limit":256,"history_limit":500,"interrupt_phrases":["fermati","annulla","lascia stare","stop"],"stt_streaming":true,"tts_streaming":true,"wake_speaker_lock":false},"stt_language":"it","stt_language_lock":true}

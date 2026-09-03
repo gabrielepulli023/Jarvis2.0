@@ -1,0 +1,13 @@
+mcp[cli]
+fastmcp
+keyring
+watchdog
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+dxcam
+Pillow
+markitdown[all]
+qdrant-client[fastembed]
+ruff
+aioesphomeapi
+silero-vad

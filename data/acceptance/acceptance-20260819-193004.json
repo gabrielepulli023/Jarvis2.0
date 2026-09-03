@@ -1,0 +1,77 @@
+{
+  "created_utc": "2026-08-19T17:30:04.662855+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "audio_input",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_output",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_sample",
+      "status": "PASS",
+      "detail": "Campione volatile analizzato e azzerato",
+      "evidence": {
+        "duration_seconds": 2.0,
+        "sample_rate": 16000,
+        "rms": 0.0006341,
+        "peak": 0.0056763,
+        "noise_floor": 0.0,
+        "clipping_ratio": 0.0,
+        "persisted": false
+      }
+    },
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "desktop_uia",
+      "status": "PASS",
+      "detail": "Testo inserito.",
+      "evidence": {
+        "hwnd": 132358
+      }
+    },
+    {
+      "gate": "calculator_uia",
+      "status": "PASS",
+      "detail": "6 controlli UIA",
+      "evidence": {
+        "hwnd": 394404
+      }
+    },
+    {
+      "gate": "file_explorer_uia",
+      "status": "PASS",
+      "detail": "149 controlli UIA",
+      "evidence": {
+        "hwnd": 1442868
+      }
+    },
+    {
+      "gate": "multi_monitor",
+      "status": "SKIP",
+      "detail": "Un solo monitor",
+      "evidence": {}
+    }
+  ]
+}

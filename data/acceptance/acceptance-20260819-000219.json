@@ -1,0 +1,27 @@
+{
+  "created_utc": "2026-08-18T22:02:19.450994+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "windows_session",
+      "status": "FAIL",
+      "detail": "FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to a corner of the screen. To disable this fail-safe, set pyautogui.FAILSAFE to False. DISABLING FAIL-SAFE IS NOT RECOMMENDED.",
+      "evidence": {}
+    }
+  ]
+}

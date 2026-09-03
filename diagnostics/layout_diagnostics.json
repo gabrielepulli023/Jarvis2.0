@@ -1,0 +1,135 @@
+{
+  "resolutions": [
+    {
+      "resolution": [
+        1280,
+        720
+      ],
+      "design_viewport": [
+        1672,
+        941
+      ],
+      "final_scale": 0.7651434643995749,
+      "viewport_offset": [
+        0.34006376195532084,
+        0.0
+      ],
+      "orb_display_size": [
+        383,
+        383
+      ],
+      "orb_aspect": 1.0,
+      "startup_mark_display_size": [
+        260,
+        260
+      ],
+      "startup_mark_aspect": 1.0,
+      "letterboxed": true
+    },
+    {
+      "resolution": [
+        1366,
+        768
+      ],
+      "design_viewport": [
+        1672,
+        941
+      ],
+      "final_scale": 0.8161530286928799,
+      "viewport_offset": [
+        0.6960680127524483,
+        0.0
+      ],
+      "orb_display_size": [
+        408,
+        408
+      ],
+      "orb_aspect": 1.0,
+      "startup_mark_display_size": [
+        277,
+        277
+      ],
+      "startup_mark_aspect": 1.0,
+      "letterboxed": true
+    },
+    {
+      "resolution": [
+        1600,
+        900
+      ],
+      "design_viewport": [
+        1672,
+        941
+      ],
+      "final_scale": 0.9564293304994687,
+      "viewport_offset": [
+        0.4250797024442363,
+        0.0
+      ],
+      "orb_display_size": [
+        478,
+        478
+      ],
+      "orb_aspect": 1.0,
+      "startup_mark_display_size": [
+        325,
+        325
+      ],
+      "startup_mark_aspect": 1.0,
+      "letterboxed": true
+    },
+    {
+      "resolution": [
+        1920,
+        1080
+      ],
+      "design_viewport": [
+        1672,
+        941
+      ],
+      "final_scale": 1.1477151965993624,
+      "viewport_offset": [
+        0.5100956429330381,
+        0.0
+      ],
+      "orb_display_size": [
+        574,
+        574
+      ],
+      "orb_aspect": 1.0,
+      "startup_mark_display_size": [
+        390,
+        390
+      ],
+      "startup_mark_aspect": 1.0,
+      "letterboxed": true
+    },
+    {
+      "resolution": [
+        2560,
+        1440
+      ],
+      "design_viewport": [
+        1672,
+        941
+      ],
+      "final_scale": 1.5302869287991498,
+      "viewport_offset": [
+        0.6801275239106417,
+        0.0
+      ],
+      "orb_display_size": [
+        765,
+        765
+      ],
+      "orb_aspect": 1.0,
+      "startup_mark_display_size": [
+        520,
+        520
+      ],
+      "startup_mark_aspect": 1.0,
+      "letterboxed": true
+    }
+  ],
+  "actual_monitor": null
+}

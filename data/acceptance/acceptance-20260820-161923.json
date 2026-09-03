@@ -1,0 +1,106 @@
+{
+  "created_utc": "2026-08-20T14:19:23.273238+00:00",
+  "interactive": true,
+  "checks": [
+    {
+      "gate": "audio_input",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_output",
+      "status": "PASS",
+      "detail": "Dispositivo enumerato",
+      "evidence": {}
+    },
+    {
+      "gate": "audio_sample",
+      "status": "SKIP",
+      "detail": "Consenso non richiesto",
+      "evidence": {}
+    },
+    {
+      "gate": "display",
+      "status": "PASS",
+      "detail": "1 monitor rilevati",
+      "evidence": {
+        "work_areas": [
+          [
+            0,
+            0,
+            1920,
+            1080
+          ]
+        ]
+      }
+    },
+    {
+      "gate": "desktop_uia",
+      "status": "PASS",
+      "detail": "Testo inserito.",
+      "evidence": {
+        "hwnd": 132506
+      }
+    },
+    {
+      "gate": "calculator_uia",
+      "status": "PASS",
+      "detail": "6 controlli UIA",
+      "evidence": {
+        "hwnd": 460160
+      }
+    },
+    {
+      "gate": "file_explorer_uia",
+      "status": "PASS",
+      "detail": "149 controlli UIA",
+      "evidence": {
+        "hwnd": 394454
+      }
+    },
+    {
+      "gate": "multi_monitor",
+      "status": "SKIP",
+      "detail": "Un solo monitor",
+      "evidence": {}
+    },
+    {
+      "gate": "admin_broker",
+      "status": "PASS",
+      "detail": "exit=0",
+      "evidence": {
+        "broker": {
+          "preexisting": false,
+          "queries": {
+            "driver.list": {
+              "duration_seconds": 0.203,
+              "error": null,
+              "exit_code": 0,
+              "message": "Operazione broker completata.",
+              "stdout_chars": 12000,
+              "success": true
+            },
+            "software.list": {
+              "duration_seconds": 0.5,
+              "error": null,
+              "exit_code": 0,
+              "message": "Operazione broker completata.",
+              "stdout_chars": 4135,
+              "success": true
+            },
+            "system.info": {
+              "duration_seconds": 0.844,
+              "error": null,
+              "exit_code": 0,
+              "message": "Operazione broker completata.",
+              "stdout_chars": 192,
+              "success": true
+            }
+          },
+          "success": true
+        }
+      }
+    }
+  ]
+}

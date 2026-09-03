@@ -1,0 +1,4 @@
+# Integrations that can safely share the stable JARVIS runtime.
+langgraph==1.2.11
+mem0ai==2.0.19
+pipecat-ai==1.7.0

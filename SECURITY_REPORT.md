@@ -1,0 +1,7 @@
+# Security report
+
+Implemented controls: central risk classification, capability authorization, unforgeable staged confirmation, fail-closed forbidden actions, Safe Mode, authenticated/replay-protected local broker IPC, allowlisted elevated commands, DPAPI secrets, path confinement, transactional file rollback, validated terminal arguments, browser token/payload hardening, log redaction/rotation, emergency cancellation and advisory-only trading.
+
+Attack surface remains in accessibility APIs, third-party browser/application content, locally installed dependencies and the authenticated user's Windows session. The broker intentionally provides no arbitrary command endpoint and does not disable UAC or Defender. A compromised user session can still exercise permissions available to that user; JARVIS is not an endpoint-security boundary.
+
+Automated evidence covers malformed/tampered/replayed broker messages, absent confirmation, permission escalation, secret-aware indexing, browser command expiry/redaction, path traversal, cancellation and injected component failures. Target-PC acceptance additionally proves UAC elevation, authenticated loopback IPC, clean broker shutdown, system/driver/software inventory, Notepad save verification, Calculator and File Explorer UIA, audio-device access and the active display topology. Enterprise application-control policies and hardware configurations not present on the target remain environmental limits rather than unimplemented capabilities.

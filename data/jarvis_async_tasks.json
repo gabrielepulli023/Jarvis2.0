@@ -1,0 +1,15 @@
+[
+  {
+    "id": "7461b88d8aa2",
+    "lane": "ai",
+    "label": "missione-operativa",
+    "priority": 2,
+    "timeout": 900,
+    "status": "completed",
+    "created_at": 1788376523.7267709,
+    "started_at": 1788376523.7277694,
+    "error": null,
+    "finished_at": 1788376540.29069,
+    "duration_ms": 16562
+  }
+]

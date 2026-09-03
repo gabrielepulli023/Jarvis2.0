@@ -1,0 +1,3 @@
+docling
+crawl4ai
+litellm

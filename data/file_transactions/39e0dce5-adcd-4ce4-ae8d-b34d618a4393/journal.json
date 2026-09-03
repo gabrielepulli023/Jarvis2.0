@@ -1,0 +1,28 @@
+{
+  "plan": {
+    "id": "39e0dce5-adcd-4ce4-ae8d-b34d618a4393",
+    "operations": [
+      {
+        "action": "write",
+        "source": null,
+        "target": "C:\\Users\\gabri\\Desktop\\Build-PC.md",
+        "content": "BUILD INTEL — PC JARVIS / SVILUPPO — AGOSTO 2026\nComponente Foto Nome / Modello Prezzo Link Note\nCPU Intel Core Ultra 5 245K € 199,90 APRI OFFERTA LGA1851 • 14 core • fino a 5,2 GHz\nScheda madre ASRock B860M Pro RS WiFi € 144,08 APRI OFFERTA B860 • DDR5 • Wi-Fi • Micro-ATX\nKingston FURY Beast RGB 32GB DDR5-6000 CL30 —\nRAM € 185,05 APRI OFFERTA 1×32 GB • 6000 MT/s • CL30 • Intel XMP\nKF560C30BBA-32\nDissipatore Thermalright Peerless Assassin 120 SE € 38,90 APRI OFFERTA Dual tower • 2×120 mm\nAlimentatore MSI MAG A750GL PCIE5 II 750W € 111,36 APRI OFFERTA 750 W • 80+ Gold • modulare • PCIe 5\nCase MONTECH AIR 100 ARGB Nero € 60,00 APRI OFFERTA Micro-ATX • mesh • 4 ventole ARGB\n\n| TOTALE COMPONENTI DA ACQUISTARE |     | € 739,29 |     |\n| ------------------------------- | --- | -------- | --- |\n| BUDGET                          |     | € 700,00 |     |\n| MARGINE / SUPERAMENTO           |     | -€ 39,29 |     |\nCOMPONENTI GIÀ DISPONIBILI — NON DA ACQUISTARE\nGPU Zotac Gaming GeForce GTX 1650 4GB — alimentazione 6-pin € 0,00 Già disponibile\n| SSD NVMe | SSD NVMe 256 GB | € 0,00 | Già disponibile |\n| -------- | --------------- | ------ | --------------- |\n| SSD SATA | SSD SATA 1 TB   | € 0,00 | Già disponibile |\nPrezzi rilevati/indicati al 30/08/2026. Possono cambiare e le spese di spedizione possono essere escluse."
+      }
+    ],
+    "destructive": false,
+    "confirmation_required": false,
+    "summary": {
+      "write": 1
+    }
+  },
+  "undo": [
+    {
+      "action": "remove",
+      "path": "C:\\Users\\gabri\\Desktop\\Build-PC.md",
+      "backup": null
+    }
+  ],
+  "status": "completed",
+  "errors": [],
+  "updated": 1788195416.8655448
+}

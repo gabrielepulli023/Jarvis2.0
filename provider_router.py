@@ -70,15 +70,17 @@ def classify_task(text: str, cognitive_decision=None) -> str:
     # the Italian wording starts with the operational verb "analizza".
     if any(word in value for word in _SUMMARIZATION):
         return "summarization"
+    if cognitive_decision is None and any(word in value for word in _CODING):
+        return "coding"
     intent = cognitive_decision or decide_intent(text)
     if intent.kind.value in {"operation", "composite", "control"}:
         return "tool_execution"
     if intent.kind.value == "capability":
         return "conversation"
-    if any(word in value for word in _CURRENT_INFO):
-        return "current_information"
     if any(word in value for word in _CODING):
         return "coding"
+    if any(word in value for word in _CURRENT_INFO):
+        return "current_information"
     if any(word in value for word in _VISION):
         return "vision"
     if any(word in value for word in _PLANNING):

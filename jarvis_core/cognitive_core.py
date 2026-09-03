@@ -92,7 +92,7 @@ _ACTION_FAMILIES = {
     "create": r"cre\w*|gener\w*|costruisc\w*|svilupp\w*",
     "delete": r"elimin\w*|cancell\w*|rimuov\w*",
     "control": r"alz\w*|abbass\w*|impost\w*|spost\w*|copi\w*|clicc\w*|prem\w*|selezion\w*|spegni\w*|riavvi\w*|acced\w*|gestisc\w*|controlla\w*|verific\w*|us\w*",
-    "manage": r"invi\w*|modific\w*|riproduc\w*|aggiung\w*|memorizz\w*|inserisc\w*|conserv\w*|archivi\w*|indicizz\w*|recuper\w*",
+    "manage": r"invi\w*|modific\w*|riproduc\w*|aggiung\w*|memorizz\w*|inserisc\w*|conserv\w*|archivi\w*|indicizz\w*|recuper\w*|automatizz\w*|organizz\w*|corregg\w*|test(?:a|alo|are|i|ando)\w*",
     "observe": r"guard\w*|osserv\w*|mostr\w*|visualizz\w*",
 }
 _ACTION_RE = re.compile(r"\b(?:" + "|".join(_ACTION_FAMILIES.values()) + r")\b", re.I)
@@ -102,6 +102,7 @@ _CAPABILITY_RE = re.compile(r"\b(?:cosa\s+sai\s+fare|quali\s+capacit|hai\s+acces
 _COMPOSITE_RE = re.compile(r"\b(?:e\s+poi|poi|quindi|dopo|workflow|progetto\s+completo|passo\s+passo|tutto)\b", re.I)
 _DANGEROUS_RE = re.compile(r"\b(?:elimin\w*|cancell\w*|spegni|riavvi\w*|install\w*|aggiorna|disinstall\w*)\b", re.I)
 _UI_RE = re.compile(r"\b(?:mouse|tastiera|clicc\w*|pulsante|finestra|schermo|pagina|scheda|menu|campo|webcam|microfono|quello|quella|questo|questa)\b", re.I)
+_MISSION_RE = re.compile(r"\b(?:e\s+poi|poi|quindi|dopo|workflow|progetto\s+completo|passo\s+passo|tutto|test\w*|corregg\w*|organizz\w*|automatizz\w*)\b", re.I)
 
 
 def _normalize(value: Any) -> str:
@@ -160,17 +161,38 @@ class UnifiedCognitiveCore:
         ranked.sort(key=lambda item: (-item[1], item[0]))
         return ranked[:8]
 
-    def _world_support(self, target: str | None, action: str | None) -> dict[str, Any]:
-        if not target or self.world is None:
+    def _target_type(self, target: str | None, action: str | None, reference=None) -> str | None:
+        reference_type = str(getattr(reference, "reference_type", "") or "").casefold()
+        if reference_type in {"artifact", "path", "file", "result"}:
+            return "artifact"
+        if target and (target.casefold() in {"file", "cartella", "documento"} or re.search(r"[\\/:]", target) or re.search(r"\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b", target, re.I)):
+            return "artifact"
+        if action in {"observe"} or (target and _UI_RE.search(target)):
+            return "ui"
+        if target and re.search(r"\b(?:pc|computer|windows|sistema|volume|audio|schermo)\b", target, re.I):
+            return "system"
+        if target and re.search(r"\b(?:chrome|spotify|firefox|edge|youtube|google|blocco note|calcolatrice|qdrant)\b", target, re.I):
+            return "application"
+        return "generic" if target else None
+
+    def _world_support(self, target: str | None, target_type: str | None, action: str | None) -> dict[str, Any]:
+        if not target or target_type not in {"application", "artifact", "ui"} or self.world is None:
             return {}
         try:
-            entity = self.world.get(f"application:{target}")
+            entity = self.world.get(f"{target_type}:{target}")
         except Exception:
             entity = None
         if not entity:
             return {}
         properties = entity.get("properties", {})
         return {"target": target, "action": action, "evidence": properties.get("running") or properties.get("focused")}
+
+    @staticmethod
+    def _mission_required(text: str, action: str | None, *, informative: bool = False) -> bool:
+        """Shared semantic mission policy for the core and legacy facade."""
+        if informative or not action:
+            return False
+        return len(_ACTION_RE.findall(text)) > 1 or bool(_MISSION_RE.search(text))
 
     def decide(self, original_user_text: str, *, resolved_operational_text: str | None = None, reference=None, operational_context=None, attention=None) -> CognitiveDecision:
         original = " ".join(str(original_user_text or "").strip().split())[:2000]
@@ -194,12 +216,12 @@ class UnifiedCognitiveCore:
         statement = bool(re.match(r"^(?:ho|hai|abbiamo|hanno|sto|stavo|vorrei sapere)\b", text, re.I))
         target = self._reference_target(reference)
         if not target and action:
-            target_match = re.search(r"\b(?:Chrome|Spotify|Firefox|Edge|YouTube|Google|Qdrant|Blocco Note|calcolatrice|file|cartella|computer|PC|documento|messaggio|video)\b", text, re.I)
+            target_match = re.search(r"(?:[A-Za-z]:[\\/][^\s,?]+|\b[\w.-]+\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b|\b(?:Chrome|Spotify|Firefox|Edge|YouTube|Google|Qdrant|Keyring|Blocco Note|calcolatrice|file|cartella|computer|PC|documento|messaggio|video|segreto|password)\b)", text, re.I)
             target = target_match.group(0) if target_match else None
         if not target and action:
             candidate = re.sub(r"^(?:per favore|mi|puoi|potresti|riesci|fammi|fai|devi|vorrei)\s+", "", text, flags=re.I)
             candidate = re.sub(r"^(?:\w+\s+){1,2}", "", candidate) if action in {"open", "close", "delete", "search"} else candidate
-            target_match = re.search(r"\b(?:Chrome|Spotify|Firefox|Edge|YouTube|Google|Qdrant|Blocco Note|calcolatrice|file|cartella|computer|PC|documento|messaggio|video)\b", candidate, re.I)
+            target_match = re.search(r"(?:[A-Za-z]:[\\/][^\s,?]+|\b[\w.-]+\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b|\b(?:Chrome|Spotify|Firefox|Edge|YouTube|Google|Qdrant|Keyring|Blocco Note|calcolatrice|file|cartella|computer|PC|documento|messaggio|video|segreto|password)\b)", candidate, re.I)
             target = target_match.group(0) if target_match else None
         if action == "search" and not target and not re.search(r"\b(?:web|internet|google|youtube|qdrant|memoria|file|cartella|documento|computer|pc)\b", text, re.I):
             action = None
@@ -208,9 +230,9 @@ class UnifiedCognitiveCore:
         top_score = ranked[0][1] if ranked else (0.92 if action else 0.0)
         alternatives = tuple(name for name, score in ranked[1:3] if top_score - score < 0.12)
         ambiguous = bool(alternatives and top_score - ranked[1][1] < 0.08)
-        composite = bool(_COMPOSITE_RE.search(text) and len(_ACTION_RE.findall(text)) > 1) or len(_ACTION_RE.findall(text)) > 1
-        mission = bool(action and composite)
         informative = explanation or statement or (text.endswith("?") and not capability and not action)
+        mission = self._mission_required(text, action, informative=informative)
+        composite = bool(mission)
         if capability_request:
             kind, strategy, needs_tools = IntentKind.CAPABILITY, Strategy.ANSWER, False
         elif informative or explanation or (action and explanation) or statement:
@@ -227,9 +249,19 @@ class UnifiedCognitiveCore:
         if needs_clarification:
             strategy = Strategy.ASK_CLARIFICATION
             needs_tools = False
-        world_support = self._world_support(target, action)
+        target_type = self._target_type(target, action, reference)
+        world_support = self._world_support(target, target_type, action)
         context_support = {"reference": bool(reference and getattr(reference, "resolved", False)), "operational": bool(operational_context)}
-        components = {"intent": 0.96 if action or informative else 0.70, "skill_match": min(1.0, top_score), "reference": 0.86 if target and has_context else (0.45 if action and not target else 0.70), "world": float((world_support.get("evidence") or {}).get("confidence", 0.0)) if isinstance(world_support.get("evidence"), Mapping) else 0.0}
+        components = {"intent": 0.96 if action or informative else 0.70}
+        if ranked:
+            components["skill_match"] = min(1.0, top_score)
+        if reference and getattr(reference, "resolved", False):
+            components["reference"] = float(getattr(reference, "confidence", 0.86) or 0.86)
+        elif target:
+            components["target"] = 0.95
+        evidence = world_support.get("evidence")
+        if isinstance(evidence, Mapping):
+            components["world"] = float(evidence.get("confidence", 0.0) or 0.0)
         if attention is not None:
             components["attention"] = max(0.0, min(1.0, float(attention)))
         confidence = sum(components.values()) / max(1, len(components))
@@ -237,8 +269,12 @@ class UnifiedCognitiveCore:
             confidence = max(confidence, 0.86)
         if needs_clarification or negated:
             confidence = min(confidence, 0.58)
+        if needs_tools and confidence < self.MEDIUM:
+            needs_clarification, needs_tools, strategy = True, False, Strategy.ASK_CLARIFICATION
+        elif needs_tools and confidence < self.HIGH and not target and not candidate_skills:
+            needs_clarification, needs_tools, strategy = True, False, Strategy.ASK_CLARIFICATION
         risk = "destructive" if _DANGEROUS_RE.search(text) else "safe"
-        decision = CognitiveDecision(kind, strategy, action, target, "application" if target else None, original, text, needs_tools, bool(action and _UI_RE.search(text) and not explanation), has_context, needs_clarification, "Quale bersaglio intendi?" if needs_clarification else None, mission, risk == "destructive", risk, candidate_skills, alternatives, max(0.0, min(1.0, confidence)), components, tuple(("negation" if negated else "explanation" if explanation else "composite_request" if composite else "explicit_action" if action else "question_or_conversation",)), getattr(reference, "value", None) if reference else None, world_support, context_support, negated)
+        decision = CognitiveDecision(kind, strategy, action, target, target_type, original, text, needs_tools, bool(action and _UI_RE.search(text) and not explanation), has_context, needs_clarification, "Quale bersaglio intendi?" if needs_clarification else None, mission, risk == "destructive", risk, candidate_skills, alternatives, max(0.0, min(1.0, confidence)), components, tuple(("negation" if negated else "explanation" if explanation else "composite_request" if composite else "explicit_action" if action else "question_or_conversation",)), getattr(reference, "value", None) if reference else None, world_support, context_support, negated)
         self._last = decision
         return decision
 
@@ -250,9 +286,10 @@ class UnifiedCognitiveCore:
 
 
 def mission_required(text: str) -> bool:
-    value = str(text or "")
-    actions = len(_ACTION_RE.findall(value))
-    return actions > 1 or bool(re.search(r"\b(?:workflow|progetto\s+completo|passo\s+passo|automatizza|organizza)\b", value, re.I))
+    value = " ".join(str(text or "").split())
+    action = _ACTION_RE.search(value)
+    informative = bool(_EXPLANATION_RE.search(value) or value.endswith("?"))
+    return UnifiedCognitiveCore._mission_required(value, action.group(0) if action else None, informative=informative)
 
 
 def _json(raw):

@@ -274,6 +274,16 @@ def _conferma_breve_operazione_precedente(testo, ultimo_contesto=None):
 
 def deve_usare_router_operativo(testo, ultimo_contesto=None, cognitive_decision=None):
     """Use the shared decision policy for every input surface."""
+    if cognitive_decision is not None:
+        # A supplied canonical decision owns intent, tool eligibility and
+        # clarification. Legacy matchers cannot upgrade a non-operational turn.
+        if (
+            cognitive_decision.needs_clarification
+            or cognitive_decision.negated
+            or not cognitive_decision.needs_tools
+        ):
+            return False
+        return True
     # Expansion manifests are the authoritative trigger index.  This keeps a
     # technology-specific request on the operational path even when its wording
     # contains a generic verb such as "salva".  Explicit registered skills must
@@ -287,10 +297,6 @@ def deve_usare_router_operativo(testo, ultimo_contesto=None, cognitive_decision=
         return True
     if _conferma_breve_operazione_precedente(testo, ultimo_contesto):
         return True
-    # A legacy human-readable string is not operational context: passing it
-    # as truthy here could make an expired result influence routing.
-    if cognitive_decision is not None:
-        return bool(cognitive_decision.needs_tools)
     has_context = isinstance(ultimo_contesto, dict) or ultimo_contesto is True
     return decide(testo, has_context=has_context).needs_tools
 

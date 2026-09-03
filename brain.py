@@ -2959,15 +2959,23 @@ def interpreta_comando(
     # Il percorso deterministico locale è una garanzia funzionale, non solo
     # un'ottimizzazione: disattivare performance_mode non deve far perdere
     # comandi semplici (apri, chiudi, volume, navigazione, sequenze).
+    # The canonical decision is the policy gate, not a post-hoc annotation.
+    # Safety/permission/confirmation checks still run in the executors below.
+    if cognitive_decision is None:
+        cognitive_decision = CORE_RUNTIME.cognition.decide(testo)
+    if (
+        cognitive_decision.needs_clarification
+        or cognitive_decision.negated
+        or not cognitive_decision.needs_tools
+    ):
+        return False, None, False
+
     fast_result = _interpreta_comando_locale(testo, on_before_action)
     if fast_result is not None:
         return fast_result
     expansion_result = _interpreta_expansion_deterministica(testo, on_before_action)
     if expansion_result is not None:
         return expansion_result
-
-    if cognitive_decision is None:
-        cognitive_decision = CORE_RUNTIME.cognition.decide(testo)
 
     router_input = _with_active_window_context(testo)
     mission_mode = bool(get_setting("cognitive_mission_mode", True) and cognitive_decision.mission_required)

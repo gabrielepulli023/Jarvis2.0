@@ -1,7 +1,7 @@
 import json
 import queue
 import re
-from decision_layer import decide
+from decision_layer import decide, resolve_control_intent
 import sys
 import threading
 import time
@@ -37,6 +37,7 @@ from jarvis_core.operational_followup import execute as execute_operational_foll
 from jarvis_core.crash_report import install_crash_reporting
 from jarvis_core.response_renderer import RESPONSE_RENDERER, TechnicalResult, message_indicates_failure
 from jarvis_identity import IdentityService
+from jarvis_voice.attention import AttentionController, AttentionState
 from jarvis_expansion.routing import match_expansion_skill
 
 domande_testo = queue.Queue(maxsize=128)
@@ -802,6 +803,7 @@ class JarvisWorker(QThread):
         self._cycle_sequence = 0
         self._active_cycle_id = None
         self._cycle_trace = []
+        self.attention = AttentionController(CORE_RUNTIME.state)
 
     def _sync_core_state(self, state):
         from jarvis_core.state_machine import JarvisState
@@ -1610,6 +1612,32 @@ class JarvisWorker(QThread):
 
     def processa_domanda(self, domanda):
         domanda_corrente = domanda
+        # CONTROL is resolved before memory, routing or cloud calls.  Muted
+        # accepts only the explicit wake word; all other speech is discarded.
+        tipo_wake, _ = interpreta_richiamo_jarvis(domanda_corrente)
+        if self.attention.state is AttentionState.MUTED:
+            if tipo_wake in {"solo", "domanda"}:
+                self.attention.wake_from_mute()
+                if tipo_wake == "solo":
+                    return
+                domanda_corrente = interpreta_richiamo_jarvis(domanda_corrente)[1]
+            else:
+                return
+        control = resolve_control_intent(
+            domanda_corrente,
+            addressed=True,
+            conversation_open=self.conversazione_vocale_attiva,
+        )
+        if control and control.name == "mute":
+            self.attention.mute()
+            self.conversazione_vocale_attiva = False
+            self.forza_ascolto = False
+            self.interrompi_ascolto.set()
+            CORE_RUNTIME.voice.interrupt()
+            CORE_RUNTIME.voice.cancel_pending()
+            richiedi_stop_voce()
+            self.stato_assistente.emit("standby")
+            return
         pending_companion = CORE_RUNTIME.companion.consume_pending_context()
         while domanda_corrente and self.running:
             domanda_corrente = domanda_corrente.strip()
@@ -1812,6 +1840,7 @@ class JarvisWorker(QThread):
         print('Di\' "ok", "okay" o "va bene" per uscire.')
         self.conversazione_vocale_attiva = True
         self.richiesta_fine = False
+        self.attention.enter_conversation()
 
         while self.running and self.conversazione_vocale_attiva:
             if self._active_cycle_id is None:
@@ -1883,6 +1912,7 @@ class JarvisWorker(QThread):
         self.conversazione_vocale_attiva = False
         self.richiesta_fine = False
         self.forza_ascolto = False
+        self.attention.disengage()
         self.stato_assistente.emit("standby")
         print('\n[STANDBY] Di\' "Jarvis" per riprendere.')
 
@@ -1912,6 +1942,43 @@ class JarvisWorker(QThread):
             domanda_pendente = self.prendi_testo_coda()
             if domanda_pendente:
                 self.processa_domanda(domanda_pendente)
+                continue
+
+            # Optional always-listening standby: STT remains local-only until
+            # selective attention has enough evidence to address JARVIS.
+            selective = bool(get_setting("continuous_listening", True)) and not bool(
+                get_setting("wake_word_only_standby", True)
+            ) and self.attention.state is not AttentionState.MUTED
+            if selective:
+                self.stato_assistente.emit("standby")
+                try:
+                    ambient = ascolta(timeout_inizio=3.0, allow_cloud=False)
+                except Exception as exc:
+                    print("\n[WARN] selective listening degradato:", redact(repr(exc)))
+                    ambient = None
+                if ambient:
+                    profile = permission_profile() or {}
+                    owner = str(profile.get("role", "")).upper() in {"OWNER", "CEO"}
+                    has_context = bool(self.conversazione_vocale_attiva or self.ultimo_contesto_pc)
+                    attention = self.attention.accepts(
+                        ambient,
+                        conversation_open=self.conversazione_vocale_attiva,
+                        owner_speaker=owner if profile else None,
+                        has_context=has_context,
+                    )
+                    CORE_RUNTIME.events.publish(
+                        "voice.attention_decision",
+                        {"addressed": attention.addressed, "confidence": round(attention.confidence, 3),
+                         "reasons": attention.reasons, "state": self.attention.state.value},
+                        source="voice_attention",
+                    )
+                    if attention.addressed:
+                        self.attention.engage()
+                        self._begin_cycle()
+                        try:
+                            self.processa_domanda(ambient)
+                        finally:
+                            self._finish_cycle()
                 continue
 
             self.stato_assistente.emit("standby")
@@ -1952,6 +2019,7 @@ class JarvisWorker(QThread):
                     self.processa_domanda(domanda)
                 continue
             if evento == "jarvis":
+                self.attention.wake_from_mute()
                 self._begin_cycle(wake_detected=True)
                 self.ciclo_conversazione_vocale()
                 continue

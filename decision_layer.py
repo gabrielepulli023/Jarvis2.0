@@ -40,6 +40,37 @@ class Decision:
     reasons: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ControlIntent:
+    """Central, backwards-compatible resolver for voice control intents."""
+
+    name: str
+    confidence: float
+    reasons: tuple[str, ...] = ()
+
+
+_MUTE = re.compile(
+    r"\b(?:zitto|muto|muta|silenzia|smetti\s+di\s+ascoltare|non\s+ascoltarmi|"
+    r"non\s+parlo\s+con\s+te|basta)\b",
+    re.I,
+)
+
+
+def resolve_control_intent(text: str, *, addressed: bool = False, conversation_open: bool = False) -> ControlIntent | None:
+    """Resolve semantic CONTROL families without exact-string matching.
+
+    ``basta`` is intentionally accepted only with clear addressee evidence.
+    """
+    value = " ".join(str(text or "").casefold().split())
+    if not value or not _MUTE.search(value):
+        return None
+    if "basta" in value and not addressed:
+        return None
+    if not addressed and not conversation_open:
+        return None
+    return ControlIntent("mute", 0.98 if addressed else 0.86, ("semantic_mute_family",))
+
+
 _QUESTION = re.compile(r"^(?:chi|che|cosa|come|quando|dove|perch[eé]|quale|quali|quanto|puoi|riesci|è vero|mi spieghi)\b", re.I)
 _ACTION = re.compile(r"^(?:per favore\s+)?(?:fammi|fai|fallo|usa|accedi|attiva|disattiva|crea|costruisci|sviluppa|apri|aprilo|aprila|chiudi|avvia|lancia|vai|scrivi|scrivilo|scrivila|digita|salva|salvalo|salvala|esporta|esportalo|esportala|metti|mettilo|mettila|sposta|copia|rinomina|elimina|rimuovi|installa|aggiorna|scarica|controlla|controllare|monitora|monitorare|tieni|avvisami|esegui|eseguire|gestisci|gestire|automatizza|configura|imposta|alza|abbassa|alzalo|abbassalo|muta|smuta|silenzia|spegni|riavvia|sospendi|blocca|premi|clicca|seleziona|mostra|nascondi|cattura|analizza|studia|converti|leggi|cerca|trova|recupera|recuperare|aggiungi|memorizza|memorizzare|inserisci|conserva|conservare|indicizza|invia|inviare|manda|mandare|modifica|modificare|genera|generare|compila|compilare|riproduci|riprodurre|archivia|archiviare|ordina|ordinare)\b", re.I)
 _UI = re.compile(r"\b(mouse|tastiera|clicca|click|pulsante|finestra|schermo|pagina|scheda|menu|campo|scrivi|digita|seleziona|guarda|quello|webcam|microfono|youtube|browser|grafico|tradingview)\b", re.I)

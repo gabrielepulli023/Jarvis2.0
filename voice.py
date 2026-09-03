@@ -649,7 +649,8 @@ def voice_status():
 
 
 def ascolta(
-    timeout_inizio=6.0, stop_event=None, on_voice_start=None, on_voice_end=None, on_partial=None, on_interrupt=None
+    timeout_inizio=6.0, stop_event=None, on_voice_start=None, on_voice_end=None, on_partial=None, on_interrupt=None,
+    *, allow_cloud=True,
 ):
     stt_started = time.perf_counter()
     diag_label = _claim_stt_diagnostic()
@@ -810,6 +811,14 @@ def ascolta(
             _write_stt_diagnostic(diag_label, frames_audio, raw_frames, raw_times, stream_open, stream_closed, first_frame, voice_time,
                                   first_above, local_text, None, audio_frame_count)
             return local_text
+
+        if not allow_cloud:
+            # Ambient standby is local-only by policy; no audio file is created.
+            testo = str(local_text or "").strip()
+            if not testo:
+                return None
+            print("\nTU (locale):", testo)
+            return testo
 
         temp = tempfile.NamedTemporaryFile(prefix="jarvis_input_", suffix=".wav", delete=False)
         file_audio = temp.name

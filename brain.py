@@ -1950,7 +1950,13 @@ def _record_operational_tool_result(nome, argomenti, risultato):
         return
     try:
         CORE_RUNTIME.context.record_operational_result(nome, risultato, argomenti)
-        record_operational_action(CORE_RUNTIME, nome, risultato)
+        record_operational_action(
+            CORE_RUNTIME,
+            request=argomenti.get("request") if isinstance(argomenti, dict) else None,
+            result=risultato,
+            tool=nome,
+            arguments=argomenti,
+        )
     except Exception as exc:
         # Context retention is a convenience; it must never break the critical
         # tool path or turn a real result into a false failure.

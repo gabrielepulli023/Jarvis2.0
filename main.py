@@ -36,7 +36,7 @@ from jarvis_core.runtime import RUNTIME as CORE_RUNTIME
 from jarvis_core.operational_followup import execute as execute_operational_followup, is_operational_followup
 from jarvis_core.crash_report import install_crash_reporting
 from jarvis_core.response_renderer import RESPONSE_RENDERER, TechnicalResult, message_indicates_failure
-from jarvis_core.reference_resolution import record_user_turn, resolve_reference
+from jarvis_core.reference_resolution import consume_pending_proposal, record_assistant_turn, record_user_turn, resolve_reference
 from jarvis_identity import IdentityService
 from jarvis_voice.attention import AttentionController, AttentionState
 from jarvis_expansion.routing import match_expansion_skill
@@ -1071,6 +1071,7 @@ class JarvisWorker(QThread):
 
     def _risposta_locale(self, message):
         rendered = self._presenta_risultato(message)
+        record_assistant_turn(CORE_RUNTIME, rendered.display_response)
         self.parla_controllato(rendered.spoken_response, already_rendered=True)
 
     def _presenta_risultato(self, message, *, request="", success=True, verification_status=None, data=None):
@@ -1631,16 +1632,6 @@ class JarvisWorker(QThread):
                 domanda_corrente = interpreta_richiamo_jarvis(domanda_corrente)[1]
             else:
                 return
-        reference = resolve_reference(CORE_RUNTIME, domanda_corrente)
-        if reference.needs_clarification:
-            candidates = " o ".join(str(item) for item in reference.alternatives)
-            self._risposta_locale(f"Quale intendi: {candidates}?")
-            return
-        if reference.resolved and isinstance(reference.value, dict) and reference.reference_type == "application":
-            if re.search(r"\bchiudi\w*\b", domanda_corrente, re.I):
-                domanda_corrente = f"chiudi {reference.value.get('name')}"
-            elif re.search(r"\bapri\w*\b", domanda_corrente, re.I):
-                domanda_corrente = f"apri {reference.value.get('name')}"
         control = resolve_control_intent(
             domanda_corrente,
             addressed=True,
@@ -1684,6 +1675,25 @@ class JarvisWorker(QThread):
 
             if self._comando_memoria_o_conferma(domanda_corrente):
                 return
+
+            reference = resolve_reference(CORE_RUNTIME, domanda_corrente)
+            if reference.needs_clarification:
+                candidates = " o ".join(str(item) for item in reference.alternatives)
+                self._risposta_locale(f"Quale intendi: {candidates}?")
+                return
+            domanda_con_contesto = contestualizza_risposta_companion(domanda_corrente, pending_companion)
+            if reference.resolved and reference.reference_type == "application" and isinstance(reference.value, dict):
+                if re.search(r"\bchiudi\w*\b", domanda_corrente, re.I):
+                    domanda_corrente = f"chiudi {reference.value.get('name')}"
+                elif re.search(r"\bapri\w*\b", domanda_corrente, re.I):
+                    domanda_corrente = f"apri {reference.value.get('name')}"
+            elif reference.resolved and reference.reference_type in {"assistant_proposal", "conversational entity/topic"}:
+                domanda_con_contesto = (
+                    f"Contesto conversazionale rilevante: {reference.value}\n"
+                    f"Nuova richiesta dell'utente: {domanda_corrente}"
+                )
+                if reference.reference_type == "assistant_proposal":
+                    consume_pending_proposal(CORE_RUNTIME)
 
             self.scheda_corrente_domanda = scheda_per_richiesta(domanda_corrente)
             self.apri_scheda_signal.emit(self.scheda_corrente_domanda)

@@ -51,6 +51,7 @@ class ReferenceResolutionTests(unittest.TestCase):
 
     def test_verified_application_and_pronoun_resolve(self):
         record_user_turn(self.runtime, "Apri Chrome")
+        self.assertIsNone(self.runtime.memory.working.get("conversation.active_object"))
         record_operational_action(self.runtime, "Apri Chrome", {"successo": True, "verification": {"status": "verified"}})
         result = ReferenceResolver(self.runtime).resolve("Chiudilo")
         self.assertTrue(result.resolved)
@@ -81,13 +82,50 @@ class ReferenceResolutionTests(unittest.TestCase):
         record_assistant_proposal(self.runtime, "Posso controllare anche i log.", focus="controllo log")
         result = ReferenceResolver(self.runtime).resolve("Fallo")
         self.assertTrue(result.resolved)
-        self.assertEqual(result.reference_type, "conversational entity/topic")
+        self.assertEqual(result.reference_type, "assistant_proposal")
         record_assistant_turn(self.runtime, "Ho completato il controllo.")
         self.assertIn("Ho completato", compact_current_context(self.runtime))
 
     def test_secret_is_redacted_from_compact_context(self):
         record_user_turn(self.runtime, "usa password: supersecret")
         self.assertNotIn("supersecret", compact_current_context(self.runtime))
+
+    def test_unrestricted_tool_result_sets_and_close_invalidates_active(self):
+        record_operational_action(
+            self.runtime,
+            tool="apri_programma",
+            arguments={"programma": "Chrome"},
+            result={"successo": True, "verification": {"status": "verified"}},
+        )
+        self.assertEqual(self.runtime.memory.working.get("conversation.active_object")["name"], "Chrome")
+        record_operational_action(
+            self.runtime,
+            tool="chiudi_programma",
+            arguments={"programma": "Chrome"},
+            result={"successo": True, "verification": {"status": "verified"}},
+        )
+        self.assertIsNone(self.runtime.memory.working.get("conversation.active_object"))
+
+    def test_failed_tool_never_creates_active_object(self):
+        record_operational_action(
+            self.runtime,
+            tool="apri_programma",
+            arguments={"programma": "Chrome"},
+            result={"successo": False},
+        )
+        self.assertIsNone(self.runtime.memory.working.get("conversation.active_object"))
+
+    def test_generic_artifact_pronoun_does_not_override_conversation_reference(self):
+        self.runtime.context.operational.record("file.create", {"successo": True, "verification": {"status": "verified"}, "dati": {"path": "C:/report.txt"}}, {})
+        record_user_turn(self.runtime, "Apri Chrome")
+        result = ReferenceResolver(self.runtime).resolve("Quello")
+        self.assertEqual(result.reference_type, "application")
+
+    def test_pending_proposal_is_volatile_and_consumable(self):
+        record_assistant_proposal(self.runtime, "Posso aprire il report.")
+        self.assertEqual(ReferenceResolver(self.runtime).resolve("Fallo").reference_type, "assistant_proposal")
+        self.runtime.memory.working.set("conversation.pending_proposal", None, ttl=0)
+        self.assertFalse(ReferenceResolver(self.runtime).resolve("Fallo").resolved)
 
 
 if __name__ == "__main__":

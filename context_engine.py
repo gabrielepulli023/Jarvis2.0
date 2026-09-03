@@ -11,13 +11,12 @@ def current():
 
 
 def update(request=None, result=None, window=None, tool=None):
-    from jarvis_core.reference_resolution import record_assistant_turn, record_operational_action, record_user_turn
+    from jarvis_core.reference_resolution import record_assistant_turn, record_user_turn
     runtime = _runtime()
     if request:
         record_user_turn(runtime, request)
     if result:
         record_assistant_turn(runtime, result)
-        record_operational_action(runtime, request or "", {"successo": True, "verification": {"status": "verified"}})
     if window:
         runtime.memory.working.set("conversation.active_window", str(window)[:500], ttl=300)
     if tool:

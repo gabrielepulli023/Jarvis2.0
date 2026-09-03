@@ -64,8 +64,16 @@ def _conversation_snapshot(working: Mapping[str, Any]) -> dict[str, Any]:
         if leaf in {"last_user_turn", "last_assistant_turn", "focus", "pending_question", "pending_proposal"}:
             result[leaf] = _clean(value)
         elif leaf in {"entities", "references", "last_action", "last_result", "active_object", "pending_choice"}:
-            result[leaf] = value
+            result[leaf] = _redact_value(value)
     return result
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _redact_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item) for item in value]
+    return _clean(value) if isinstance(value, str) else value
 
 
 def record_user_turn(runtime, text: str) -> None:
@@ -85,11 +93,11 @@ def record_user_turn(runtime, text: str) -> None:
                 candidates.append({"type": "application", "name": name})
     if candidates:
         _set(runtime, "conversation.references", candidates, ttl=REFERENCE_TTL)
-        if len(candidates) == 1:
-            _set(runtime, "conversation.active_object", candidates[0], ttl=REFERENCE_TTL)
         _set(runtime, "conversation.entities", [row["name"] for row in candidates], ttl=CONVERSATION_TTL)
     elif _WHY.match(value) or _CONTINUE.match(value):
         _set(runtime, "conversation.pending_question", value, ttl=REFERENCE_TTL)
+    if re.fullmatch(r"(?:no|lascia stare|non farlo|annulla)\W*", value, re.I):
+        invalidate_pending_proposal(runtime)
 
 
 def record_assistant_turn(runtime, text: str) -> None:
@@ -108,24 +116,83 @@ def record_assistant_proposal(runtime, proposal: str, *, focus: str | None = Non
             _set(runtime, "conversation.focus", _clean(focus), ttl=CONVERSATION_TTL)
 
 
-def record_operational_action(runtime, request: str, result: Mapping[str, Any] | None) -> None:
-    """Retain only a small verified action reference; full result stays operational."""
+def invalidate_pending_proposal(runtime) -> None:
+    _set(runtime, "conversation.pending_proposal", None, ttl=0)
+
+
+def consume_pending_proposal(runtime) -> None:
+    invalidate_pending_proposal(runtime)
+
+
+_OBJECT_KEYS = ("programma", "application", "app", "nome", "name", "path", "percorso", "target", "file", "filename")
+_APP_TOOLS = {"apri_programma", "chiudi_programma", "avvia_programma", "lancia_programma"}
+_PATH_TOOLS = {"apri_percorso", "apri_percorso_con_programma", "crea_file", "scrivi_file", "converti_file", "conversione_file"}
+
+
+def _verified(result: Mapping[str, Any]) -> bool:
     data = result if isinstance(result, Mapping) else {}
-    verified = bool(data.get("successo")) and (
-        data.get("verification", {}).get("status") == "verified"
-        if isinstance(data.get("verification"), Mapping)
-        else bool(data.get("dati", {}).get("verified")) if isinstance(data.get("dati"), Mapping) else False
+    verification = data.get("verification")
+    details = data.get("dati")
+    return bool(data.get("successo")) and (
+        verification.get("status") == "verified" if isinstance(verification, Mapping)
+        else bool(details.get("verified")) if isinstance(details, Mapping) else False
     )
-    if not verified:
+
+
+def _find_object(value: Any, keys: tuple[str, ...] = _OBJECT_KEYS) -> tuple[str | None, str | None]:
+    if isinstance(value, Mapping):
+        for key in keys:
+            candidate = value.get(key)
+            if isinstance(candidate, (str, int, float)) and str(candidate).strip():
+                return key, _clean(candidate, 300).strip(" .!?\"")
+        for child in value.values():
+            found = _find_object(child, keys)
+            if found[1]:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            found = _find_object(child, keys)
+            if found[1]:
+                return found
+    return None, None
+
+
+def record_operational_action(
+    runtime,
+    request: str | None = None,
+    result: Mapping[str, Any] | None = None,
+    *,
+    tool: str | None = None,
+    arguments: Mapping[str, Any] | None = None,
+) -> None:
+    """Record a minimal object only after a real verified tool result."""
+    data = result if isinstance(result, Mapping) else {}
+    if not _verified(data):
         return
-    request_value = _clean(request)
-    _set(runtime, "conversation.last_action", {"request": request_value, "verified": True}, ttl=REFERENCE_TTL)
-    match = _APP_REQUEST.search(request_value)
-    if match:
-        name = _clean(match.group(1)).strip(" .!?\"")
-        if name:
-            active = {"type": "application", "name": name, "action": request_value.split()[0].casefold(), "verified": True}
-            _set(runtime, "conversation.active_object", active, ttl=REFERENCE_TTL)
+    tool_name = str(tool or "").casefold()
+    args = arguments if isinstance(arguments, Mapping) else {}
+    result_data = data.get("dati") if isinstance(data.get("dati"), Mapping) else data
+    keys = (("programma", "application", "app", "nome", "name") if tool_name in _APP_TOOLS
+            else ("path", "percorso", "target", "file", "filename") if tool_name in _PATH_TOOLS
+            else _OBJECT_KEYS)
+    key, object_value = _find_object(result_data, keys)
+    if not object_value:
+        key, object_value = _find_object(args, keys)
+    if not object_value and request:
+        match = _APP_REQUEST.search(_clean(request))
+        if match:
+            key, object_value = "programma", _clean(match.group(1)).strip(" .!?\"")
+    if not object_value:
+        return
+    action = "chiudi" if "chiudi" in tool_name or "close" in tool_name else tool_name or "azione"
+    object_type = "application" if key in {"programma", "application", "app"} or tool_name in _APP_TOOLS else "artifact"
+    active = {"type": object_type, "name": object_value, "action": action, "verified": True, "source": "tool"}
+    _set(runtime, "conversation.last_action", {"tool": tool_name, "object": _redact_value(active), "verified": True}, ttl=REFERENCE_TTL)
+    current = _working(runtime).get("conversation.active_object")
+    if action == "chiudi" and isinstance(current, Mapping) and str(current.get("name", "")).casefold() == object_value.casefold():
+        _set(runtime, "conversation.active_object", None, ttl=0)
+    elif action != "chiudi":
+        _set(runtime, "conversation.active_object", active, ttl=REFERENCE_TTL)
 
 
 class ReferenceResolver:
@@ -147,7 +214,11 @@ class ReferenceResolver:
             return ReferenceResolution(False)
         working = _working(self.runtime)
         operational = self._operational()
-        if _PRONOUN.search(value) and operational and operational.get("status") == "succeeded":
+        proposal = working.get("conversation.pending_proposal")
+        if proposal and (_CONTINUE.match(value) or _WHY.match(value)):
+            return ReferenceResolution(True, "assistant_proposal", _clean(proposal, 800), .96, "working_memory")
+        explicit_artifact = bool(re.search(r"\b(?:aprilo|aprila|salvalo|salvala|esportalo|esportala|mettilo|mettila)\b", value))
+        if explicit_artifact and operational and operational.get("status") == "succeeded":
             path = operational.get("artifact_path") or operational.get("source_path")
             if path and re.search(r"\b(?:aprilo|aprila|quello|quella|questo|questa)\b", value):
                 return ReferenceResolution(True, "artifact/result", str(path), .98, "operational_context")
@@ -169,6 +240,8 @@ class ReferenceResolver:
             active = working.get("conversation.active_object")
             if isinstance(active, Mapping) and active.get("name") and len(refs) <= 1:
                 return ReferenceResolution(True, str(active.get("type") or "entity"), active, .9, "working_memory")
+            if len(refs) == 1:
+                return ReferenceResolution(True, str(refs[0].get("type") or "entity"), refs[0], .86, "working_memory")
             if len(refs) > 1:
                 return self._ambiguous(refs)
             snapshot = getattr(getattr(self.runtime, "context", None), "snapshot", lambda: {})()

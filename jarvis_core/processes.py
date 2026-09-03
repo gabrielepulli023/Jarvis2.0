@@ -86,6 +86,18 @@ class ProcessManager:
             rows.append({**info, "cpu_percent": cpu, "memory_bytes": memory, "children": children})
         return rows
 
+    def running_inventory(self, limit: int = 300) -> list[dict[str, Any]]:
+        """Read only pid/name/exe inventory for lightweight context refreshes."""
+        rows: list[dict[str, Any]] = []
+        for process in psutil.process_iter(("pid", "name", "exe")):
+            if len(rows) >= max(1, min(int(limit), 1000)):
+                break
+            try:
+                rows.append({"pid": process.info.get("pid"), "name": process.info.get("name"), "exe": process.info.get("exe")})
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+        return rows
+
     def terminate(self, process_id: str, timeout: float = 3.0) -> bool:
         with self._lock:
             item = self._items.get(process_id)

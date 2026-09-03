@@ -47,17 +47,30 @@ class ContextEngine:
 
     def _base_snapshot(self) -> dict:
         active = None
+        visible_windows = []
         if self.windows is not None:
             try:
-                row = self.windows.active()
+                visible_windows = list(self.windows.list())[:100]
+                row = next((item for item in visible_windows if item.get("active")), None)
                 active = (
                     None
                     if row is None
-                    else {"title": row.title, "pid": row.pid, "executable": row.executable, "monitor": row.monitor}
+                    else {"title": row.get("title"), "pid": row.get("pid"), "executable": row.get("executable"), "monitor": row.get("monitor")}
                 )
-            except OSError:
+            except (AttributeError, OSError):
                 active = None
         managed = self.processes.snapshot()
+        try:
+            os_processes = self.processes.running_inventory(300)
+            os_processes_available = True
+        except (AttributeError, OSError):
+            os_processes = []
+            os_processes_available = False
+        observed_applications = [
+            {"name": row.get("title"), "executable": row.get("executable"), "pid": row.get("pid"), "visible": True}
+            for row in visible_windows
+            if row.get("title") or row.get("executable")
+        ]
         opened = [row for row in managed if row["running"]]
         with self._lock:
             events = list(self._events)[-20:]
@@ -65,6 +78,11 @@ class ContextEngine:
             "captured_at": time.time(),
             "active_window": active,
             "opened_apps": opened,
+            "managed_processes": managed,
+            "os_processes": os_processes,
+            "os_processes_available": os_processes_available,
+            "visible_windows": visible_windows,
+            "observed_applications": observed_applications,
             "current_task": self.missions.recent(1),
             "conversation": conversation_snapshot(self.memory.working.snapshot()),
             "system_state": self.state.snapshot(),

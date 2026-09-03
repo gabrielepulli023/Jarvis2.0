@@ -140,9 +140,9 @@ def _verified(result: Mapping[str, Any]) -> bool:
     data = result if isinstance(result, Mapping) else {}
     verification = data.get("verification")
     details = data.get("dati")
-    return bool(data.get("successo")) and (
+    return bool(data.get("successo", data.get("success", False))) and (
         verification.get("status") == "verified" if isinstance(verification, Mapping)
-        else bool(details.get("verified")) if isinstance(details, Mapping) else False
+        else bool(details.get("verified")) if isinstance(details, Mapping) else bool(data.get("verified"))
     )
 
 

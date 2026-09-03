@@ -1,5 +1,6 @@
 import json
 import queue
+import re
 import threading
 from collections import deque
 from pathlib import Path
@@ -19,7 +20,8 @@ _model_lock = threading.Lock()
 # Limita la latenza: in caso di CPU occupata manteniamo solo audio recente.
 audio_queue = queue.Queue(maxsize=24)
 command_queue = queue.Queue()
-_recent_audio = deque(maxlen=24)
+# 40 * 2000 samples / 16000 Hz = 5 seconds of bounded recent PCM.
+_recent_audio = deque(maxlen=40)
 _speaker_verifier = None
 _speaker_lock = threading.Lock()
 _last_wake_text = None
@@ -123,6 +125,23 @@ def recupera_frase_wake():
     return value
 
 
+def _recupera_frase_completa(chunks, fallback="jarvis"):
+    """Recover wake+command with the existing unrestricted local Vosk stream."""
+    try:
+        from transcriber import StreamingTranscriber
+
+        transcriber = StreamingTranscriber()
+        for chunk in chunks:
+            transcriber.feed(chunk)
+        text = transcriber.finish()
+        variants = r"(?:jarvis|jarvi|iarvis|gervis|jarves)"
+        if re.search(rf"\b{variants}\b", str(text or "").casefold()):
+            return str(text).casefold().strip()
+    except (RuntimeError, ValueError, TypeError, OSError, ImportError):
+        pass
+    return str(fallback or "jarvis").casefold().strip()
+
+
 def leggi_comando():
     try:
         return command_queue.get_nowait()
@@ -211,8 +230,10 @@ def aspetta_jarvis():
                 if contiene_jarvis(testo):
                     print("\n🎤 JARVIS")
                     if _verify_speaker():
+                        recent = list(_recent_audio)
                         with _speaker_lock:
-                            _last_wake_text = testo
+                            _last_wake_text = _recupera_frase_completa(recent, fallback="jarvis")
+                        _recent_audio.clear()
                         return "jarvis"
                     print("Voce non autorizzata: comando ignorato.")
             # Evita falsi risvegli da ipotesi parziali del modello Vosk.

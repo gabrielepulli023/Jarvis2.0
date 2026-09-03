@@ -36,6 +36,7 @@ from jarvis_core.runtime import RUNTIME as CORE_RUNTIME
 from jarvis_core.operational_followup import execute as execute_operational_followup, is_operational_followup
 from jarvis_core.crash_report import install_crash_reporting
 from jarvis_core.response_renderer import RESPONSE_RENDERER, TechnicalResult, message_indicates_failure
+from jarvis_core.reference_resolution import record_user_turn, resolve_reference
 from jarvis_identity import IdentityService
 from jarvis_voice.attention import AttentionController, AttentionState
 from jarvis_expansion.routing import match_expansion_skill
@@ -1618,6 +1619,7 @@ class JarvisWorker(QThread):
 
     def processa_domanda(self, domanda):
         domanda_corrente = domanda
+        record_user_turn(CORE_RUNTIME, domanda_corrente)
         # CONTROL is resolved before memory, routing or cloud calls.  Muted
         # accepts only the explicit wake word; all other speech is discarded.
         tipo_wake, _ = interpreta_richiamo_jarvis(domanda_corrente)
@@ -1629,6 +1631,16 @@ class JarvisWorker(QThread):
                 domanda_corrente = interpreta_richiamo_jarvis(domanda_corrente)[1]
             else:
                 return
+        reference = resolve_reference(CORE_RUNTIME, domanda_corrente)
+        if reference.needs_clarification:
+            candidates = " o ".join(str(item) for item in reference.alternatives)
+            self._risposta_locale(f"Quale intendi: {candidates}?")
+            return
+        if reference.resolved and isinstance(reference.value, dict) and reference.reference_type == "application":
+            if re.search(r"\bchiudi\w*\b", domanda_corrente, re.I):
+                domanda_corrente = f"chiudi {reference.value.get('name')}"
+            elif re.search(r"\bapri\w*\b", domanda_corrente, re.I):
+                domanda_corrente = f"apri {reference.value.get('name')}"
         control = resolve_control_intent(
             domanda_corrente,
             addressed=True,

@@ -15,6 +15,8 @@ from provider_router import decide_route, fallback_routes, stream_non_openai
 from performance_metrics import record_tool
 from decision_layer import decide as decide_intent, router_guidance
 from jarvis_core.logging import redact
+from jarvis_core.runtime import RUNTIME as CORE_RUNTIME
+from jarvis_core.reference_resolution import compact_current_context, record_assistant_turn, record_user_turn
 from jarvis_integrations.mem0_backend import conversational_context as mem0_context, remember_conversation_turn
 
 _ranked_memory = ContextBuilder(MemoryStore(data_path("jarvis_memory.db")))
@@ -490,6 +492,7 @@ def chiedi_jarvis(
         "user",
         domanda
     )
+    record_user_turn(CORE_RUNTIME, domanda)
 
 
     # ========================================================
@@ -526,6 +529,9 @@ def chiedi_jarvis(
         contesto_temporale
     )
     instructions += "\n\n" + router_guidance(decide_intent(domanda))
+    compact_context = compact_current_context(CORE_RUNTIME)
+    if compact_context:
+        instructions += "\n\nContesto immediato canonico (volatile):\n" + compact_context
     memories = memory_context()
     if memories:
         instructions += "\n\nMemoria personale approvata dall'utente:\n" + memories
@@ -809,6 +815,7 @@ def chiedi_jarvis(
                 "assistant",
                 risposta_memoria
             )
+            record_assistant_turn(CORE_RUNTIME, risposta_memoria)
             if get_setting("ai_memory", True):
                 record_episode(domanda, risposta_memoria)
                 _ranked_memory.store.remember(

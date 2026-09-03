@@ -4,6 +4,7 @@ import time
 from collections import deque
 from typing import Any
 from jarvis_core.operational_context import OperationalContext
+from jarvis_core.reference_resolution import conversation_snapshot
 
 
 class ContextEngine:
@@ -64,7 +65,7 @@ class ContextEngine:
             "active_window": active,
             "opened_apps": opened,
             "current_task": self.missions.recent(1),
-            "conversation": self.memory.working.snapshot(),
+            "conversation": conversation_snapshot(self.memory.working.snapshot()),
             "system_state": self.state.snapshot(),
             "recent_events": events,
         }

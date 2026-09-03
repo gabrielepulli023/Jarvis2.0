@@ -24,7 +24,7 @@ from mission_control import verified_success, verify_result
 from recovery_manager import restore_last
 from project_builder import create_project, list_projects, restore_project_version
 from visual_agent import visual_task
-from context_engine import current as current_context
+from jarvis_core.reference_resolution import record_operational_action
 from project_quality import inspect_project, test_project
 from trading_analyst import analyze_trading_chart
 from desktop_intelligence import inspect_ui, ui_focus, ui_invoke, ui_set_value
@@ -223,7 +223,7 @@ def _tool_context_state():
         "successo": True,
         "messaggio": "Contesto operativo caricato.",
         "dati": {
-            **current_context(),
+            **CORE_RUNTIME.context.snapshot(),
             "operational_result": CORE_RUNTIME.context.operational_context(),
         },
     }
@@ -1950,6 +1950,7 @@ def _record_operational_tool_result(nome, argomenti, risultato):
         return
     try:
         CORE_RUNTIME.context.record_operational_result(nome, risultato, argomenti)
+        record_operational_action(CORE_RUNTIME, nome, risultato)
     except Exception as exc:
         # Context retention is a convenience; it must never break the critical
         # tool path or turn a real result into a false failure.
@@ -2968,7 +2969,7 @@ def interpreta_comando(
             client,
             str(get_setting("ai_model", MODELLO_ROUTER)),
             testo,
-            json.dumps(current_context(), ensure_ascii=False),
+            json.dumps(CORE_RUNTIME.context.snapshot(), ensure_ascii=False),
         )
         if orchestrator is not None:
             orchestration_run_id = orchestrator.begin(testo, mission_plan)

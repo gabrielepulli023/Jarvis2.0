@@ -1,47 +1,33 @@
-import json
-import os
-import threading
-from datetime import datetime
-
-from app_paths import data_path
+"""Deprecated compatibility facade over the canonical runtime context."""
 
 
-STORE = data_path("jarvis_context.json")
-_LOCK = threading.RLock()
-
-
-def _load():
-    try:
-        value = json.loads(STORE.read_text(encoding="utf-8")) if STORE.exists() else {}
-        return value if isinstance(value, dict) else {}
-    except Exception:
-        return {}
+def _runtime():
+    from jarvis_core.runtime import RUNTIME
+    return RUNTIME
 
 
 def current():
-    with _LOCK:
-        return _load()
+    return _runtime().context.snapshot()
 
 
 def update(request=None, result=None, window=None, tool=None):
-    with _LOCK:
-        data = _load()
-        if request:
-            data["last_request"] = str(request)[:2000]
-        if result:
-            data["last_result"] = str(result)[:3000]
-        if window:
-            data["active_window"] = str(window)[:500]
-        if tool:
-            data["last_tool"] = str(tool)[:100]
-        data["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        temporary = STORE.with_suffix(STORE.suffix + f".{os.getpid()}.tmp")
-        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, STORE)
-        return data
+    from jarvis_core.reference_resolution import record_assistant_turn, record_operational_action, record_user_turn
+    runtime = _runtime()
+    if request:
+        record_user_turn(runtime, request)
+    if result:
+        record_assistant_turn(runtime, result)
+        record_operational_action(runtime, request or "", {"successo": True, "verification": {"status": "verified"}})
+    if window:
+        runtime.memory.working.set("conversation.active_window", str(window)[:500], ttl=300)
+    if tool:
+        runtime.memory.working.set("conversation.last_tool", str(tool)[:100], ttl=300)
+    return current()
 
 
 def clear():
-    with _LOCK:
-        STORE.unlink(missing_ok=True)
+    working = _runtime().memory.working
+    for key in tuple(working.snapshot()):
+        if str(key).startswith("conversation."):
+            working.set(key, None, ttl=0)
     return True

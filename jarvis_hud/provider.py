@@ -3,7 +3,6 @@ import json
 from collections import Counter
 from pathlib import Path
 from capability_registry import CAPABILITIES
-from context_engine import current as current_context
 from settings_store import get_setting
 from continuous_improvement import analyze_evaluations
 
@@ -73,6 +72,10 @@ class HUDSnapshotProvider:
         emergency = getattr(self.runtime, "emergency", None)
         broker = getattr(self.runtime, "broker", None)
         improvement = analyze_evaluations()
+        context_engine = getattr(self.runtime, "context", None)
+        context_snapshot = (
+            context_engine.snapshot() if callable(getattr(context_engine, "snapshot", None)) else {}
+        )
         return {
             "missions": {"counts": dict(counts), "active": active[:10], "recent": missions[:20]},
             "health": health,
@@ -86,7 +89,7 @@ class HUDSnapshotProvider:
             "assistant_state": assistant_state,
             "emergency": {"active": bool(getattr(emergency, "active", False))},
             "broker": {"healthy": bool(broker.health()) if broker is not None else False},
-            "context": current_context(),
+            "context": context_snapshot,
             "capabilities": discovered,
             "openai": openai_state,
             "memory": memory,

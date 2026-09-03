@@ -70,13 +70,21 @@ class WorldModelTests(unittest.TestCase):
         bus = EventBus()
         conflicts = []
         bus.subscribe("world.conflict", lambda event: conflicts.append(event))
-        world = WorldModel(self.memory, events=bus)
+        now = [0.0]
+        world = WorldModel(self.memory, events=bus, clock=lambda: now[0])
         world.observe("application:chrome", {"focused": True}, source="dom", confidence=.98, evidence_type="observed_structured")
-        for _ in range(5):
-            world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        now[0] = 5.0
+        world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        now[0] = 20.0
+        world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
         self.assertEqual(len(conflicts), 1)
         world.observe("application:spotify", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
         self.assertEqual(len(conflicts), 2)
+        now[0] = 46.0
+        world.observe("application:chrome", {"focused": True}, source="dom", confidence=.98, evidence_type="observed_structured")
+        world.observe("application:code", {"focused": True}, source="vision", confidence=.55, evidence_type="observed_perception")
+        self.assertEqual(len(conflicts), 3)
 
     def test_managed_process_absence_does_not_close_application(self):
         self.world.observe_tool("apps.open", {"success": True, "verification": {"status": "verified"}}, {"application": "Chrome"})

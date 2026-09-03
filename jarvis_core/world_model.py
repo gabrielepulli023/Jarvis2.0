@@ -19,6 +19,7 @@ APP_TTL = 45.0
 WINDOW_TTL = 20.0
 ARTIFACT_TTL = 600.0
 MISSION_TTL = 300.0
+CONFLICT_TTL = 45.0
 _SECRET = re.compile(r"(?i)(password|passphrase|api[_ -]?key|token|authorization|secret|cookie)\s*[:=]?\s*\S+")
 _APP_KEYS = ("application", "app", "programma", "nome", "name")
 _PATH_KEYS = ("path", "percorso", "output_path", "source_path", "file_path", "target")
@@ -106,6 +107,9 @@ class WorldModel:
             name: belief for name, belief in value.get("properties", {}).items()
             if not isinstance(belief, Mapping) or belief.get("expires_at") is None or now < float(belief["expires_at"])
         }
+        conflict = value.get("last_conflict")
+        if isinstance(conflict, Mapping) and conflict.get("expires_at") is not None and now >= float(conflict["expires_at"]):
+            value.pop("last_conflict", None)
         return value if value["properties"] or value.get("last_conflict") else None
 
     def observe(
@@ -195,14 +199,19 @@ class WorldModel:
                 if name == "focused" and raw is True and kind in {"application", "window"}:
                     self._clear_other_focus(canonical, now)
             if conflicts:
-                conflict = {"entity_id": canonical, **conflicts[-1], "source": str(source)[:120]}
-                if old.get("last_conflict") != conflict:
+                conflict = {"entity_id": canonical, **conflicts[-1], "source": str(source)[:120], "expires_at": now + CONFLICT_TTL}
+                previous = old.get("last_conflict")
+                previous_fingerprint = {key: value for key, value in previous.items() if key != "expires_at"} if isinstance(previous, Mapping) else None
+                current_fingerprint = {key: value for key, value in conflict.items() if key != "expires_at"}
+                if previous_fingerprint != current_fingerprint:
                     old["last_conflict"] = conflict
                     changed = True
                     new_conflict = True
             if changed:
                 old["updated_at"] = now
                 remaining = [float(item.get("expires_at")) - now for item in old["properties"].values() if isinstance(item, Mapping) and item.get("expires_at") is not None]
+                if isinstance(old.get("last_conflict"), Mapping) and old["last_conflict"].get("expires_at") is not None:
+                    remaining.append(float(old["last_conflict"]["expires_at"]) - now)
                 self.working.set(self._key(canonical), old, ttl=max(1.0, max(remaining, default=1.0)), source=source, confidence=confidence)
                 if self.events is not None and state_changed:
                     self.events.publish("world.updated", {"entity_id": canonical, "source": source}, source="world")

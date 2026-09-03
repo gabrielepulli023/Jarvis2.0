@@ -17,7 +17,7 @@ from script_engine import list_scripts, run_script, save_script
 from system_extended import aggiorna_programma, connessioni_rete, crea_archivio_zip, estrai_archivio_zip, info_rete, installa_programma, programmi_installati, servizi_windows, spazio_cartella, stato_wifi
 from event_automation import add_rule, list_rules, set_rule_enabled, delete_rule
 from agent_state import add_step as agent_add_step, begin as agent_begin, finish as agent_finish, recent as recent_jobs, latest_resumable, get_job as get_agent_job, add_review as agent_add_review
-from cognitive_core import mission_required, plan_mission, review_mission
+from cognitive_core import plan_mission, review_mission
 from decision_layer import decide, router_guidance
 from automation_intelligence import policy_guidance
 from mission_control import verified_success, verify_result
@@ -2930,6 +2930,7 @@ def _interpreta_comando_locale(testo, on_before_action=None):
 def interpreta_comando(
     testo,
     on_before_action=None,
+    cognitive_decision=None,
 ):
 
     """
@@ -2965,8 +2966,11 @@ def interpreta_comando(
     if expansion_result is not None:
         return expansion_result
 
+    if cognitive_decision is None:
+        cognitive_decision = CORE_RUNTIME.cognition.decide(testo)
+
     router_input = _with_active_window_context(testo)
-    mission_mode = bool(get_setting("cognitive_mission_mode", True) and mission_required(testo))
+    mission_mode = bool(get_setting("cognitive_mission_mode", True) and cognitive_decision.mission_required)
     mission_plan = None
     orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
     orchestration_run_id = None
@@ -2997,7 +3001,7 @@ def interpreta_comando(
     try:
 
         router_model = select_model("router", "complex" if mission_mode else "simple")
-        request = {"model": router_model, "instructions": ISTRUZIONI, "input": router_guidance(decide(testo)) + "\n" + router_input,
+        request = {"model": router_model, "instructions": ISTRUZIONI, "input": router_guidance(cognitive_decision) + "\n" + router_input,
                    "tools": TOOLS, "parallel_tool_calls": False}
         reasoning = reasoning_options(router_model, reasoning_effort)
         if reasoning is not None:

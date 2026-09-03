@@ -272,7 +272,7 @@ def _conferma_breve_operazione_precedente(testo, ultimo_contesto=None):
     return any(marker in previous for marker in pending_markers)
 
 
-def deve_usare_router_operativo(testo, ultimo_contesto=None):
+def deve_usare_router_operativo(testo, ultimo_contesto=None, cognitive_decision=None):
     """Use the shared decision policy for every input surface."""
     # Expansion manifests are the authoritative trigger index.  This keeps a
     # technology-specific request on the operational path even when its wording
@@ -289,9 +289,10 @@ def deve_usare_router_operativo(testo, ultimo_contesto=None):
         return True
     # A legacy human-readable string is not operational context: passing it
     # as truthy here could make an expired result influence routing.
+    if cognitive_decision is not None:
+        return bool(cognitive_decision.needs_tools)
     has_context = isinstance(ultimo_contesto, dict) or ultimo_contesto is True
-    decision = decide(testo, has_context=has_context)
-    return decision.needs_tools
+    return decide(testo, has_context=has_context).needs_tools
 
 
 def _contesto_operativo_corrente():
@@ -311,6 +312,23 @@ def _testo_operativo_risolto(testo: str, reference) -> str:
             if re.search(r"\bapri\w*\b", testo, re.I):
                 return f"apri {value['name']}"
     return testo
+
+
+def _prepare_cognitive_turn(original_text, resolved_text, reference=None, operational_context=None):
+    """Build the one canonical decision shared by all turn consumers."""
+    cognition = getattr(CORE_RUNTIME, "cognition", None)
+    if cognition is None:
+        return decide(resolved_text, has_context=bool(reference or operational_context))
+    try:
+        return cognition.decide(
+            original_text,
+            resolved_operational_text=resolved_text,
+            reference=reference,
+            operational_context=operational_context,
+        )
+    except Exception as exc:
+        print("[WARN] cognitive decision degraded:", redact(repr(exc)))
+        return decide(resolved_text, has_context=bool(reference or operational_context))
 
 
 def _esegui_followup_operativo(testo, contesto):
@@ -1008,10 +1026,10 @@ class JarvisWorker(QThread):
         self.parla_controllato("Va bene.", interrompibile=False)
         self.stato_assistente.emit("standby")
 
-    def risposta_ai(self, domanda):
+    def risposta_ai(self, domanda, cognitive_decision=None):
         # Defense in depth: an operational utterance must never reach the
         # conversational provider, even if a routing exception occurs.
-        if deve_usare_router_operativo(domanda, _contesto_operativo_corrente()):
+        if deve_usare_router_operativo(domanda, _contesto_operativo_corrente(), cognitive_decision):
             message = "Non ho eseguito alcuna azione: la richiesta operativa deve essere gestita da uno strumento verificabile."
             self._risposta_locale(message)
             return None
@@ -1027,7 +1045,7 @@ class JarvisWorker(QThread):
         def produce_response():
             full = ""
             try:
-                for phrase in chiedi_jarvis(domanda):
+                for phrase in chiedi_jarvis(domanda, cognitive_decision=cognitive_decision):
                     if not self.running:
                         break
                     if not phrase:
@@ -1714,7 +1732,12 @@ class JarvisWorker(QThread):
             print("SCHEDA:", self.scheda_corrente_domanda)
             print("======================================")
 
-            usa_brain = deve_usare_router_operativo(resolved_text, contesto_operativo)
+            cognitive_decision = _prepare_cognitive_turn(
+                original_user_text, resolved_text, reference, contesto_operativo
+            )
+            usa_brain = deve_usare_router_operativo(
+                resolved_text, contesto_operativo, cognitive_decision
+            )
             print("🧠 Controllo PC:", usa_brain)
 
             if usa_brain:
@@ -1782,6 +1805,7 @@ class JarvisWorker(QThread):
                                 interpreta_comando,
                                 domanda_router,
                                 on_before_action=annuncia_azione,
+                                cognitive_decision=cognitive_decision,
                                 priority=2,
                                 timeout=900,
                                 label="missione-operativa",
@@ -1797,6 +1821,7 @@ class JarvisWorker(QThread):
                             comando, risposta_comando, minimizza = interpreta_comando(
                                 domanda_router,
                                 on_before_action=annuncia_azione,
+                                cognitive_decision=cognitive_decision,
                             )
                 except Exception as exc:
                     print("\n[ERROR] ERRORE BRAIN:", redact(repr(exc)))
@@ -1839,7 +1864,7 @@ class JarvisWorker(QThread):
                     self.stato_assistente.emit("listening" if self.conversazione_vocale_attiva else "standby")
                     return
 
-            nuova_domanda = self.risposta_ai(domanda_con_contesto)
+            nuova_domanda = self.risposta_ai(domanda_con_contesto, cognitive_decision)
             if nuova_domanda == "__JARVIS__":
                 self.forza_ascolto = True
                 self.stato_assistente.emit("listening")

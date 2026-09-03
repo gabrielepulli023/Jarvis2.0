@@ -56,6 +56,7 @@ from jarvis_vault import CredentialVault
 from dataclasses import asdict
 from audit_log import recent as recent_audit, record_action
 from .world_model import WorldModel
+from .cognitive_core import UnifiedCognitiveCore
 import sys
 import time
 
@@ -847,6 +848,14 @@ class CoreRuntime:
         configure_default_observers(self.perception)
         self.world.bind_context(self.context)
         self.world.bind_perception(self.perception)
+        self.cognition = UnifiedCognitiveCore(
+            registry=self.skills,
+            context=self.context,
+            world=self.world,
+            memory=self.memory.working,
+            state=self.state,
+            events=self.events,
+        )
         self.actions = VerifiedActionRunner(self.perception)
         self.watchdog = Watchdog(self.health)
         self.watchdog.register(
@@ -977,6 +986,7 @@ class CoreRuntime:
             "memory": {"working": self.memory.working.snapshot(), "recent": self.memory.search(limit=5)},
             "skills": {"registered": self.skills.list(), "metrics": self.skills.metrics()},
             "orchestration": self.orchestrator.snapshot(),
+            "cognition": self.cognition.snapshot(),
             "integrations": self.integrations.status(deep=False),
             "ufo_sidecar": self.ufo_sidecar.snapshot(),
             "expansion": self.expansion.status(deep=False),

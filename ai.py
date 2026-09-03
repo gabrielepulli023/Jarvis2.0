@@ -453,9 +453,7 @@ def _diagnostic_mode_enabled():
     return str(os.getenv("JARVIS_DIAGNOSTIC_MODE", "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def chiedi_jarvis(
-    domanda
-):
+def chiedi_jarvis(domanda, cognitive_decision=None):
 
     if not domanda:
 
@@ -528,7 +526,9 @@ def chiedi_jarvis(
         +
         contesto_temporale
     )
-    instructions += "\n\n" + router_guidance(decide_intent(domanda))
+    if cognitive_decision is None:
+        cognitive_decision = decide_intent(domanda)
+    instructions += "\n\n" + router_guidance(cognitive_decision)
     compact_context = compact_current_context(CORE_RUNTIME)
     if compact_context:
         instructions += "\n\nContesto immediato canonico (volatile):\n" + compact_context
@@ -575,7 +575,7 @@ def chiedi_jarvis(
 
         # Il provider e' scelto per tipo di lavoro. I provider alternativi
         # ricevono solo la conversazione, mai gli strumenti operativi/web.
-        decision = decide_route(domanda)
+        decision = decide_route(domanda, cognitive_decision=cognitive_decision)
         if decision.provider != "openai":
             provider_error = None
             candidates=[decision,*fallback_routes(decision)]

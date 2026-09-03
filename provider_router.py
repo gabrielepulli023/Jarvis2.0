@@ -64,13 +64,13 @@ def available_providers() -> set[str]:
     return providers
 
 
-def classify_task(text: str) -> str:
+def classify_task(text: str, cognitive_decision=None) -> str:
     value = str(text or "").lower()
     # Summarization of a long document is a conversational workload even when
     # the Italian wording starts with the operational verb "analizza".
     if any(word in value for word in _SUMMARIZATION):
         return "summarization"
-    intent = decide_intent(text)
+    intent = cognitive_decision or decide_intent(text)
     if intent.kind.value in {"operation", "composite", "control"}:
         return "tool_execution"
     if intent.kind.value == "capability":
@@ -93,11 +93,11 @@ def _models() -> dict[str, str]:
     return {"openai": str(get_setting("ai_model", "gpt-5.6-luna")), "claude": str(claude_model), "kimi": str(get_setting("kimi_model", "kimi-k3"))}
 
 
-def decide_route(text: str, *, requires_tools: bool = False) -> RouteDecision:
+def decide_route(text: str, *, requires_tools: bool = False, cognitive_decision=None) -> RouteDecision:
     """Choose by task category, user preference, availability and safe fallbacks."""
     available = available_providers()
     preferred = str(get_setting("ai_provider", "auto")).strip().lower()
-    kind = classify_task(text)
+    kind = classify_task(text, cognitive_decision)
     if requires_tools:
         kind = "tool_execution"
         order, reason = _PROVIDER_ORDER[kind], _ROUTE_REASONS[kind]

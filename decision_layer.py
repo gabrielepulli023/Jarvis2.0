@@ -8,36 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import StrEnum
-
-
-class IntentKind(StrEnum):
-    CONVERSATION = "conversation"
-    INFORMATION = "information"
-    CAPABILITY = "capability"
-    OPERATION = "operation"
-    COMPOSITE = "composite"
-    CONTROL = "control"
-
-
-class Strategy(StrEnum):
-    ANSWER = "answer"
-    ASK_CLARIFICATION = "ask_clarification"
-    USE_TOOLS = "use_tools"
-    OBSERVE_THEN_ACT = "observe_then_act"
-    PLAN_AND_VERIFY = "plan_and_verify"
-
-
-@dataclass(frozen=True, slots=True)
-class Decision:
-    kind: IntentKind
-    strategy: Strategy
-    confidence: float
-    needs_tools: bool
-    needs_observation: bool
-    needs_context: bool
-    destructive: bool
-    reasons: tuple[str, ...] = ()
+from jarvis_core.cognitive_core import Decision, IntentKind, Strategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +57,7 @@ _EXPANSION_TECHNOLOGY = re.compile(
 )
 
 
-def decide(text: str, *, has_context: bool = False) -> Decision:
+def _legacy_decide(text: str, *, has_context: bool = False) -> Decision:
     value = " ".join(str(text or "").strip().split())
     if not value:
         return Decision(IntentKind.CONVERSATION, Strategy.ASK_CLARIFICATION, 1.0, False, False, False, False, ("empty",))
@@ -137,6 +108,26 @@ def decide(text: str, *, has_context: bool = False) -> Decision:
     if question:
         return Decision(IntentKind.INFORMATION, Strategy.ANSWER, .90, False, False, context, False, ("question_without_action",))
     return Decision(IntentKind.CONVERSATION, Strategy.ANSWER, .70, False, False, context, False, ("no_action_signal",))
+
+
+def decide(text: str, *, has_context: bool = False) -> Decision:
+    """Compatibility entry point backed by the canonical cognitive core."""
+    from jarvis_core.cognitive_core import UnifiedCognitiveCore
+
+    result = UnifiedCognitiveCore().decide(
+        text,
+        operational_context={} if has_context else None,
+    )
+    return Decision(
+        result.intent_kind,
+        result.strategy,
+        result.confidence,
+        result.needs_tools,
+        result.needs_observation,
+        result.needs_context,
+        result.destructive,
+        result.reasons,
+    )
 
 
 def router_guidance(decision: Decision) -> str:

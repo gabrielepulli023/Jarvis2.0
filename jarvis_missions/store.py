@@ -7,10 +7,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from .graph import TaskGraph
+from jarvis_core.logging import redact
 
 
 class MissionStore:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -32,24 +33,28 @@ class MissionStore:
         with self._lock, self._connection() as db:
             db.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)")
             if db.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 0:
-                db.execute("INSERT INTO schema_version VALUES (?)", (self.SCHEMA_VERSION,))
+                db.execute("INSERT INTO schema_version(version) VALUES (?)", (1,))
             db.execute("""CREATE TABLE IF NOT EXISTS missions(
                 id TEXT PRIMARY KEY, objective TEXT NOT NULL, status TEXT NOT NULL, graph_json TEXT NOT NULL,
-                checkpoint_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+                checkpoint_json TEXT NOT NULL, plan_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(missions)")}
+            if "plan_json" not in columns:
+                db.execute("ALTER TABLE missions ADD COLUMN plan_json TEXT NOT NULL DEFAULT '{}'")
+            db.execute("UPDATE schema_version SET version=?", (self.SCHEMA_VERSION,))
             db.execute(
                 """CREATE TABLE IF NOT EXISTS mission_events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL, event TEXT NOT NULL,
                 payload_json TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(mission_id) REFERENCES missions(id))"""
             )
 
-    def create(self, objective: str, graph: TaskGraph) -> str:
+    def create(self, objective: str, graph: TaskGraph, plan: dict | None = None) -> str:
         mission_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc).isoformat()
         payload = json.dumps(graph.as_dict(), ensure_ascii=False)
         with self._lock, self._connection() as db:
             db.execute(
-                "INSERT INTO missions VALUES(?,?,?,?,?,?,?)",
-                (mission_id, objective, "pending", payload, "{}", now, now),
+                "INSERT INTO missions(id,objective,status,graph_json,checkpoint_json,plan_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (mission_id, str(objective)[:1000], "pending", payload, "{}", json.dumps(redact(plan or {}), ensure_ascii=False)[:20000], now, now),
             )
             db.execute(
                 "INSERT INTO mission_events(mission_id,event,payload_json,created_at) VALUES(?,?,?,?)",
@@ -67,8 +72,8 @@ class MissionStore:
         event: str = "mission.updated",
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
-        graph_json = json.dumps(graph.as_dict(), ensure_ascii=False)
-        checkpoint_json = json.dumps(checkpoint or {}, ensure_ascii=False)
+        graph_json = json.dumps(redact(graph.as_dict()), ensure_ascii=False)[:50000]
+        checkpoint_json = json.dumps(redact(checkpoint or {}), ensure_ascii=False)[:20000]
         with self._lock, self._connection() as db:
             changed = db.execute(
                 "UPDATE missions SET status=?,graph_json=?,checkpoint_json=?,updated_at=? WHERE id=?",
@@ -89,6 +94,7 @@ class MissionStore:
         value = dict(row)
         value["graph"] = json.loads(value.pop("graph_json"))
         value["checkpoint"] = json.loads(value.pop("checkpoint_json"))
+        value["plan"] = json.loads(value.pop("plan_json", "{}"))
         return value
 
     def recent(self, limit: int = 20) -> list[dict]:

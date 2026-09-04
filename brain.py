@@ -2927,6 +2927,31 @@ def _interpreta_comando_locale(testo, on_before_action=None):
     message = str(result.get("messaggio") or ("Fatto." if result.get("successo") else "Operazione non riuscita."))
     return True, message, tool_richiede_minimizzazione(tool_name, result)
 
+def _esegui_missione_canonica(testo, cognitive_decision):
+    """Run only validated Phase 5 plans through the existing tool executor."""
+    if not cognitive_decision.mission_required:
+        return None
+    from jarvis_missions import MissionPlanner, MissionToolCatalogAdapter, PlanValidator
+    try:
+        proposed = plan_mission(client, str(get_setting("ai_model", MODELLO_ROUTER)), testo)
+        catalog = MissionToolCatalogAdapter(CORE_RUNTIME.skills)
+        plan = MissionPlanner(catalog, PlanValidator(catalog)).plan(testo, proposed=proposed)
+        mission = CORE_RUNTIME.missions.run_plan(plan, executor=esegui_tool)
+        orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
+        if orchestrator is not None and mission.get("id"):
+            orchestrator.begin(testo, plan.as_dict(), run_id=mission["id"])
+            orchestrator.finish(mission["id"], str(mission.get("status", "unknown")), "MissionEngine canonical execution")
+        status = str(mission.get("status", "failed"))
+        if status == "waiting_user":
+            return True, "Missione in attesa di conferma per il prossimo passo.", False
+        if status == "completed":
+            return True, "Missione completata con prove verificate.", False
+        return True, "La missione non è stata completata: resta da verificare.", False
+    except Exception as exc:
+        audit_record("mission_plan_rejected", error=redact(repr(exc)))
+        return True, "Non posso eseguire la missione: il piano non è valido o non è verificabile.", False
+
+
 def interpreta_comando(
     testo,
     on_before_action=None,
@@ -2946,6 +2971,7 @@ def interpreta_comando(
 
     True, "Fatto...", True/False
     """
+
 
 
     if not testo:
@@ -2969,6 +2995,10 @@ def interpreta_comando(
         or not cognitive_decision.needs_tools
     ):
         return False, None, False
+
+    mission_result = _esegui_missione_canonica(testo, cognitive_decision)
+    if mission_result is not None:
+        return mission_result
 
     fast_result = _interpreta_comando_locale(testo, on_before_action)
     if fast_result is not None:

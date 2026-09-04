@@ -74,17 +74,17 @@ class AutonomousOrchestrator:
         }
         return json.dumps(payload, ensure_ascii=False, default=str)
 
-    def begin(self, objective: str, plan: dict[str, Any] | None = None) -> str:
+    def begin(self, objective: str, plan: dict[str, Any] | None = None, *, run_id: str | None = None) -> str:
         with self._lock:
             self._counter += 1
-            run_id = f"mission-{int(time.time() * 1000):x}-{self._counter:x}"
-            trace = OrchestrationTrace(str(objective or "")[:1000], dict(plan or {}), run_id)
-            self._traces[run_id] = trace
+            trace_id = str(run_id or f"mission-{int(time.time() * 1000):x}-{self._counter:x}")[:128]
+            trace = OrchestrationTrace(str(objective or "")[:1000], dict(plan or {}), trace_id)
+            self._traces[trace_id] = trace
             while len(self._traces) > self.max_traces:
                 oldest = min(self._traces.values(), key=lambda item: item.started_at)
                 self._traces.pop(oldest.run_id, None)
         self._publish(trace)
-        return run_id
+        return trace_id
 
     def observe(self, run_id: str, tool: str, arguments: dict[str, Any], result: Any) -> dict[str, Any]:
         """Record one tool observation and derive a safe recovery hint."""

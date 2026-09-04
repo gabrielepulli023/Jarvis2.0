@@ -41,6 +41,23 @@ class TaskGraph:
         self.cancelled = False
         self.validate()
 
+    @classmethod
+    def from_dict(cls, value: dict) -> "TaskGraph":
+        rows = value.get("tasks", []) if isinstance(value, dict) else []
+        tasks = []
+        for row in rows[:32]:
+            task = Task(str(row["id"]), str(row.get("label", row["id"]))[:200], set(row.get("dependencies", [])))
+            task.status = TaskStatus(str(row.get("status", "pending")))
+            task.attempts = max(0, int(row.get("attempts", 0)))
+            task.max_attempts = max(1, min(5, int(row.get("max_attempts", 3))))
+            task.result = dict(row.get("result") or {})
+            task.evidence = list(row.get("evidence") or [])[:8]
+            task.error = str(row.get("error"))[:500] if row.get("error") else None
+            tasks.append(task)
+        graph = cls(tasks)
+        graph.cancelled = bool(value.get("cancelled", False)) if isinstance(value, dict) else False
+        return graph
+
     def add(self, task: Task) -> None:
         if task.id in self.tasks:
             raise ValueError(f"duplicate task id: {task.id}")
@@ -118,7 +135,7 @@ class TaskGraph:
 
     def wait_for_user(self, task_id: str, reason: str) -> None:
         task = self.tasks[task_id]
-        if task.status not in {TaskStatus.READY, TaskStatus.RETRY}:
+        if task.status not in {TaskStatus.READY, TaskStatus.RETRY, TaskStatus.RUNNING}:
             raise RuntimeError("task is not ready")
         task.error = str(reason)
         task.status = TaskStatus.WAITING_USER

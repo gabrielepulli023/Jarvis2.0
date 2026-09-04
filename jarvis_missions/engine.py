@@ -28,6 +28,7 @@ class StepSpec:
     precondition_expected: dict | None = None
     rollback_action: str | None = None
     rollback_arguments: dict | None = None
+    rollback_risk: str = "safe"
     fallbacks: tuple[str, ...] = ()
 
 
@@ -289,7 +290,7 @@ class MissionEngine:
             event=f"mission.{status}",
         )
         if status == "completed" and self.memory is not None:
-            procedure = " -> ".join(f"{spec.action}({spec.arguments})" for spec in specs)
+            procedure = " -> ".join(f"{spec.action}({','.join(sorted(spec.arguments))})" for spec in specs)
             self.memory.remember(
                 procedure,
                 kind="procedural",
@@ -309,19 +310,22 @@ class MissionEngine:
             return None
         latest: dict[str, dict] = {"result": {}}
         strategies = []
-        for name in spec.fallbacks:
+        for fallback in spec.fallbacks:
+            name = str(fallback.get("action")) if isinstance(fallback, Mapping) else str(fallback)
+            fallback_arguments = dict(fallback.get("arguments") or {}) if isinstance(fallback, Mapping) else {}
+            fallback_expected = dict(fallback.get("expected") or {}) if isinstance(fallback, Mapping) else spec.expected
             action = self._actions.get(name)
             if action is None:
                 continue
-            if self.authorize(name, dict(spec.arguments), self._risk(name, "safe")) != "allow":
+            if self.authorize(name, fallback_arguments, self._risk(name, str(fallback.get("risk", "safe")) if isinstance(fallback, Mapping) else "safe")) != "allow":
                 continue
 
-            def execute(action=action):
-                latest["result"] = dict(action(**dict(spec.arguments)) or {})
+            def execute(action=action, fallback_arguments=fallback_arguments):
+                latest["result"] = dict(action(**fallback_arguments) or {})
                 return latest["result"]
 
-            def verify(_after, result, name=name):
-                return self.confidence.sufficient([self.evidence.verify(name, spec.expected, result)])
+            def verify(_after, result, name=name, fallback_expected=fallback_expected):
+                return self.confidence.sufficient([self.evidence.verify(name, fallback_expected, result)])
 
             strategies.append(RecoveryStrategy(name, execute, verify))
         if not strategies:
@@ -332,7 +336,7 @@ class MissionEngine:
         if not outcome.success:
             return None
         result = dict(latest["result"])
-        proof = self.evidence.verify(outcome.strategy or spec.action, spec.expected, result)
+        proof = self.evidence.verify(outcome.strategy or spec.action, fallback_expected, result)
         return result, proof
 
     @classmethod
@@ -387,7 +391,7 @@ class MissionEngine:
 
     def _fail(self, graph, task, spec, error):
         if not self._retry_safe(spec.action):
-            task.status = TaskStatus.FAILED
+            task.status = TaskStatus.NEEDS_VERIFICATION
             task.attempts = task.max_attempts
             task.error = error
             graph.refresh()
@@ -403,7 +407,7 @@ class MissionEngine:
             if action is None:
                 rows.append({"step": spec.id, "success": False, "error": "unknown rollback"})
                 continue
-            if self.authorize(spec.rollback_action, dict(spec.rollback_arguments or {}), spec.risk) != "allow":
+            if self.authorize(spec.rollback_action, dict(spec.rollback_arguments or {}), self._risk(spec.rollback_action, spec.rollback_risk)) != "allow":
                 rows.append({"step": spec.id, "success": False, "error": "rollback authorization required"})
                 continue
             try:
@@ -442,7 +446,8 @@ class MissionEngine:
 
     def run_plan(self, plan: MissionPlan, *, executor: Callable[[str, dict], dict], dry_run: bool = False, confirmed_steps: set[str] | None = None, mission_id: str | None = None, on_step: Callable[[str, str, dict, dict], None] | None = None) -> dict:
         specs = [self._spec_from_plan_step(s) for s in plan.steps]
-        names = {name for spec in specs for name in (spec.action, spec.precondition_action, spec.rollback_action, *spec.fallbacks) if name}
+        names = {name for spec in specs for name in (spec.action, spec.precondition_action, spec.rollback_action) if name}
+        names.update(str(item.get("action")) if isinstance(item, Mapping) else str(item) for spec in specs for item in spec.fallbacks)
         for name in names:
             self.register_action(name, lambda _action=name, **kwargs: executor(_action, kwargs))
         return self.run(plan.objective, specs, dry_run=dry_run, confirmed_steps=confirmed_steps, mission_id=mission_id, on_step=on_step, plan_payload=plan.as_dict())
@@ -517,14 +522,15 @@ class MissionEngine:
             from .planner import PlanValidator
             parsed = PlanValidator(self.catalog).validate(parsed)
         specs = [self._spec_from_plan_step(s) for s in parsed.steps]
-        names = {name for spec in specs for name in (spec.action, spec.precondition_action, spec.rollback_action, *spec.fallbacks) if name}
+        names = {name for spec in specs for name in (spec.action, spec.precondition_action, spec.rollback_action) if name}
+        names.update(str(item.get("action")) if isinstance(item, Mapping) else str(item) for spec in specs for item in spec.fallbacks)
         for name in names:
             self.register_action(name, lambda _action=name, **kwargs: executor(_action, kwargs))
         return self.run(parsed.objective, specs, confirmed_steps=confirmed_steps, mission_id=str(mission_id), existing_graph=TaskGraph.from_dict(record["graph"]), on_step=on_step, plan_payload=parsed.as_dict())
 
     @staticmethod
     def _spec_from_plan_step(step: PlannedStep) -> StepSpec:
-        return StepSpec(step.id, step.label, step.action, dict(step.arguments), dict(step.expected), frozenset(step.dependencies), step.timeout, step.max_attempts, step.risk, precondition_action=(step.precondition or {}).get("action") if step.precondition else None, precondition_arguments=(step.precondition or {}).get("arguments") if step.precondition else None, precondition_expected=(step.precondition or {}).get("expected") if step.precondition else None, fallbacks=step.fallbacks, rollback_action=(step.rollback or {}).get("action") if step.rollback else None, rollback_arguments=(step.rollback or {}).get("arguments") if step.rollback else None)
+        return StepSpec(step.id, step.label, step.action, dict(step.arguments), dict(step.expected), frozenset(step.dependencies), step.timeout, step.max_attempts, step.risk, precondition_action=(step.precondition or {}).get("action") if step.precondition else None, precondition_arguments=(step.precondition or {}).get("arguments") if step.precondition else None, precondition_expected=(step.precondition or {}).get("expected") if step.precondition else None, fallbacks=step.fallbacks, rollback_action=(step.rollback or {}).get("action") if step.rollback else None, rollback_arguments=(step.rollback or {}).get("arguments") if step.rollback else None, rollback_risk=(step.rollback or {}).get("risk", "safe") if step.rollback else "safe")
 
     def cancel_all(self) -> int:
         with self._token_lock:

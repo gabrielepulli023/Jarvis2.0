@@ -117,6 +117,17 @@ class CanonicalMissionTests(unittest.TestCase):
         cancelled = engine.cancel(mission_id)
         self.assertEqual(cancelled["status"], "cancelled")
 
+    def test_fallback_mapping_and_nested_risk_are_preserved(self):
+        planner = MissionPlanner(MissionToolCatalogAdapter(_Registry()))
+        plan = planner.plan("fallback", {"steps": [{"id": "s", "action": "search", "fallbacks": [{"action": "open", "arguments": {"path": "x"}, "risk": "sensitive"}]}]})
+        self.assertEqual(plan.steps[0].fallbacks[0]["arguments"], {"path": "x"})
+        self.assertEqual(plan.steps[0].fallbacks[0]["risk"], "sensitive")
+
+    def test_current_manifest_risk_cannot_be_lowered_by_plan(self):
+        planner = MissionPlanner(MissionToolCatalogAdapter(_Registry()))
+        plan = planner.plan("risk", {"steps": [{"id": "s", "action": "open", "risk": "safe", "arguments": {"path": "x"}}]})
+        self.assertEqual(plan.steps[0].risk, "sensitive")
+
     def _worker_bridge(self, engine, pending, confirmed):
         import brain
         import main

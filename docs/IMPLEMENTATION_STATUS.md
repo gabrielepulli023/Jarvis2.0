@@ -1,5 +1,7 @@
 # Implementation status
 
+PHASE 5 ABSOLUTE CLOSEOUT (2026-09-04): corretti rollback risk, fallback arguments/effective risk, side-effect exception uncertainty e procedural-memory redaction. Verifica finale: 15 test Phase 5, 616 test discovered, Evaluation Pack 10/10, compileall/Ruff/`pip check` OK. Manual/hardware NON ESEGUITI. Backup baseline/final SHA registrati nei file `phase5-absolute-closeout-*.zip`.
+
 PHASE 5 ACCEPTANCE E2E CLOSEOUT (2026-09-04): aggiunti test reali del bridge `JarvisWorker._comando_memoria_o_conferma`, preflight/executor-pending, exactly-once, ambiguity e completion del DAG; EvidenceEngine usa anche i dati normalizzati dell’adapter. Regressione finale: 614/614 OK; Evaluation Pack automatico 10/10; compileall, Ruff e `pip check` OK. Manual/hardware NON ESEGUITI.
 
 PHASE 5 FINAL SAFETY CLOSEOUT (2026-09-04): verification esplicita prioritaria sui verifier registrati; nested action con risk corrente, retry side-effect safe-only, `NEEDS_VERIFICATION` distinto da failed, resume revalidated, confirmation bridge e orchestrator live preservati. Procedural memory redatta. Verifica: 63 test mirati, evaluation pack 10/10, regressione 611/611; compileall, Ruff e `pip check` OK. Manual/hardware NON ESEGUITI.

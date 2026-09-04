@@ -171,7 +171,7 @@ class CoreRuntime:
         self.world = WorldModel(self.memory.working, events=self.events)
         self.mission_store = MissionStore(data_path("missions") / "missions.db")
         self.missions = MissionEngine(
-            self.mission_store, memory=self.memory, recovery=self.recovery, authorize=self._authorize_mission
+            self.mission_store, memory=self.memory, recovery=self.recovery, authorize=self._authorize_mission, catalog=self.skills
         )
         self.context = ContextEngine(
             self.events, self.state, self.processes, self.memory, self.mission_store, self.windows, world=self.world

@@ -26,13 +26,13 @@ class EvidenceEngine:
         self._verifiers[action] = verifier
 
     def verify(self, action: str, expected: dict, result: dict) -> Evidence:
-        if action in self._verifiers:
-            return self._verifiers[action](expected, result)
         verification = result.get("verification")
         if isinstance(verification, dict) and "status" in verification:
             status = str(verification.get("status", "")).lower()
             strength = float(verification.get("strength", 0.0) or 0.0)
             return Evidence("explicit_verification", status == "verified", max(0.0, min(strength, 1.0)), str(verification.get("evidence", status)), str(expected))
+        if action in self._verifiers:
+            return self._verifiers[action](expected, result)
         if not result.get("successo", result.get("success", False)):
             return Evidence(
                 "action_result", False, 1.0, str(result.get("messaggio", result.get("error", "failed"))), str(expected)
@@ -42,6 +42,8 @@ class EvidenceEngine:
             exists = Path(str(path)).exists()
             return Evidence("filesystem", exists, 1.0, f"exists={exists}: {path}", str(expected))
         observed = result.get("observed")
+        if observed is None and isinstance(result.get("dati"), dict):
+            observed = result["dati"].get("observed") or result["dati"]
         if observed is not None:
             matches = (
                 all(observed.get(k) == v for k, v in expected.items())

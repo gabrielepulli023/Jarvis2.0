@@ -57,6 +57,7 @@ class MissionEngine:
         memory=None,
         recovery: RecoveryEngine | None = None,
         authorize: Callable[[str, dict, str], str] | None = None,
+        catalog=None,
     ):
         self.store = store
         self.evidence = evidence or EvidenceEngine()
@@ -64,6 +65,7 @@ class MissionEngine:
         self.memory = memory
         self.recovery = recovery
         self.authorize = authorize or (lambda action, arguments, risk: "allow")
+        self.catalog = catalog
         self._actions: dict[str, Callable[..., dict]] = {}
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="jarvis-mission")
         self._tokens: set[CancellationToken] = set()
@@ -144,14 +146,15 @@ class MissionEngine:
                     graph.skip(task.id, f"unresolvable output reference: {exc}")
                     self.store.save(mission_id, graph, status="running", checkpoint={"task": task.id}, event="task.blocked")
                     continue
-                permission = self.authorize(spec.action, arguments, spec.risk)
+                effective_risk = self._risk(spec.action, spec.risk)
+                permission = self.authorize(spec.action, arguments, effective_risk)
                 if permission == "confirm" and spec.id not in confirmed_steps:
                     graph.wait_for_user(task.id, "confirmation required")
                     self.store.save(
                         mission_id,
                         graph,
                         status="waiting_user",
-                        checkpoint={"task": task.id, "risk": spec.risk, "action": spec.action, "confirmation_mode": "preflight", "mission_id": mission_id},
+                        checkpoint={"task": task.id, "risk": effective_risk, "action": spec.action, "confirmation_mode": "preflight", "mission_id": mission_id},
                         event="task.waiting_user",
                     )
                     waiting = True
@@ -179,7 +182,7 @@ class MissionEngine:
                         )
                         continue
                     pre_arguments = self._resolve_arguments(spec.precondition_arguments or {}, graph, task)
-                    pre_permission = self.authorize(spec.precondition_action, pre_arguments, "safe")
+                    pre_permission = self.authorize(spec.precondition_action, pre_arguments, self._risk(spec.precondition_action, "safe"))
                     if pre_permission != "allow":
                         graph.wait_for_user(task.id, "precondition authorization required") if pre_permission == "confirm" else graph.skip(task.id, "precondition permission denied")
                         self.store.save(mission_id, graph, status="waiting_user" if pre_permission == "confirm" else "running", checkpoint={"task": task.id, "precondition": spec.precondition_action}, event="task.precondition_authorization")
@@ -228,7 +231,7 @@ class MissionEngine:
                     )
                     continue
                 except Exception as exc:
-                    graph.fail(task.id, redact(f"{type(exc).__name__}: {exc}"))
+                    self._fail(graph, task, spec, redact(f"{type(exc).__name__}: {exc}"))
                     self.store.save(
                         mission_id, graph, status="running", checkpoint={"task": task.id}, event="task.failed"
                     )
@@ -245,14 +248,18 @@ class MissionEngine:
                     graph.complete(task.id, dict(result or {}), [proof.as_dict()])
                     event = "task.completed"
                 else:
-                    recovered = self._recover(spec, token)
+                    recovered = self._recover(spec, token) if self._retry_safe(spec.action) else None
                     if recovered is not None:
                         recovered_result, recovered_proof = recovered
                         proof = recovered_proof
                         graph.complete(task.id, recovered_result, [recovered_proof.as_dict()])
                         event = "task.recovered"
                     else:
-                        graph.fail(task.id, f"verification failed ({proof.confidence:.2f}): {proof.observation}")
+                        if self._retry_safe(spec.action):
+                            graph.fail(task.id, f"verification failed ({proof.confidence:.2f}): {proof.observation}")
+                        else:
+                            task.status = TaskStatus.NEEDS_VERIFICATION
+                            task.error = f"unverified side effect: {proof.observation}"
                         event = "task.unverified"
                 self.store.save(
                     mission_id,
@@ -306,7 +313,7 @@ class MissionEngine:
             action = self._actions.get(name)
             if action is None:
                 continue
-            if self.authorize(name, dict(spec.arguments), spec.risk) != "allow":
+            if self.authorize(name, dict(spec.arguments), self._risk(name, "safe")) != "allow":
                 continue
 
             def execute(action=action):
@@ -362,6 +369,31 @@ class MissionEngine:
             return item
         return resolve(value)
 
+    def _risk(self, action: str, declared: str) -> str:
+        row = None
+        if self.catalog is not None:
+            lookup = getattr(self.catalog, "manifest", None)
+            row = lookup(action) if lookup else None
+        actual = str((row or {}).get("risk", "safe"))
+        order = {"safe": 0, "sensitive": 1, "admin": 2, "destructive": 3, "forbidden": 4}
+        return max((str(declared), actual), key=lambda item: order.get(item, 4))
+
+    def _retry_safe(self, action: str) -> bool:
+        if self.catalog is None:
+            return True
+        row = self.catalog.manifest(action)
+        effects = (row or {}).get("side_effects")
+        return isinstance(effects, (list, tuple)) and len(effects) == 0 or effects == ["none"] or effects == ("none",)
+
+    def _fail(self, graph, task, spec, error):
+        if not self._retry_safe(spec.action):
+            task.status = TaskStatus.FAILED
+            task.attempts = task.max_attempts
+            task.error = error
+            graph.refresh()
+            return
+        graph.fail(task.id, error)
+
     def _rollback(self, specs: list[StepSpec], graph: TaskGraph) -> list[dict]:
         rows = []
         for spec in reversed(specs):
@@ -387,8 +419,7 @@ class MissionEngine:
                     rows.append({"step": spec.id, "success": False, "error": redact(f"{type(exc).__name__}: {exc}")})
         return rows
 
-    @staticmethod
-    def _critic_status(graph: TaskGraph) -> str:
+    def _critic_status(self, graph: TaskGraph) -> str:
         statuses = {x.status for x in graph.tasks.values()}
         if graph.cancelled:
             return "cancelled"
@@ -399,9 +430,7 @@ class MissionEngine:
         if statuses and statuses <= {TaskStatus.COMPLETED, TaskStatus.SKIPPED}:
             return "completed_with_skips"
         if TaskStatus.NEEDS_VERIFICATION in statuses:
-            # Keep the v1 public mission status for compatibility while the
-            # graph carries the stronger, non-retryable uncertainty state.
-            return "failed"
+            return "needs_verification" if self.catalog is not None else "failed"
         if TaskStatus.FAILED in statuses:
             return "failed"
         if TaskStatus.BLOCKED in statuses:
@@ -422,7 +451,7 @@ class MissionEngine:
         """Persist a validated plan before any executor/orchestrator starts."""
         return self.store.create(plan.objective, self.build([self._spec_from_plan_step(step) for step in plan.steps]), plan.as_dict())
 
-    def accept_confirmed_result(self, mission_id: str, step_id: str, result: dict, *, executor: Callable[[str, dict], dict]) -> dict:
+    def accept_confirmed_result(self, mission_id: str, step_id: str, result: dict, *, executor: Callable[[str, dict], dict], on_step=None) -> dict:
         record = self.store.get(str(mission_id))
         if not record:
             raise KeyError(mission_id)
@@ -447,7 +476,7 @@ class MissionEngine:
         task.status = TaskStatus.RUNNING
         graph.complete(step_id, dict(result or {}), [proof.as_dict()])
         self.store.save(mission_id, graph, status="running", checkpoint={"task": step_id, "evidence": proof.as_dict()}, event="task.confirmed")
-        return self.resume(mission_id, executor=executor)
+        return self.resume(mission_id, executor=executor, on_step=on_step)
 
     def waiting_preflight(self) -> list[dict]:
         rows = []
@@ -467,16 +496,16 @@ class MissionEngine:
                 return str(row["id"]), str(checkpoint.get("task"))
         return None
 
-    def resume_preflight(self, mission_id: str, step_id: str, *, executor: Callable[[str, dict], dict]) -> dict:
+    def resume_preflight(self, mission_id: str, step_id: str, *, executor: Callable[[str, dict], dict], on_step=None) -> dict:
         record = self.store.get(str(mission_id))
         if not record or record.get("status") != "waiting_user":
             raise ValueError("mission is not awaiting preflight confirmation")
         checkpoint = record.get("checkpoint") or {}
         if checkpoint.get("confirmation_mode") != "preflight" or checkpoint.get("task") != step_id:
             raise ValueError("preflight binding mismatch")
-        return self.resume(mission_id, executor=executor, confirmed_steps={step_id})
+        return self.resume(mission_id, executor=executor, confirmed_steps={step_id}, on_step=on_step)
 
-    def resume(self, mission_id: str, *, executor: Callable[[str, dict], dict], confirmed_steps: set[str] | None = None) -> dict:
+    def resume(self, mission_id: str, *, executor: Callable[[str, dict], dict], confirmed_steps: set[str] | None = None, on_step=None) -> dict:
         record = self.store.get(str(mission_id))
         if not record:
             raise KeyError(mission_id)
@@ -484,11 +513,14 @@ class MissionEngine:
         if not plan.get("steps"):
             raise ValueError("mission plan unavailable")
         parsed = MissionPlan.from_dict(plan)
+        if self.catalog is not None:
+            from .planner import PlanValidator
+            parsed = PlanValidator(self.catalog).validate(parsed)
         specs = [self._spec_from_plan_step(s) for s in parsed.steps]
         names = {name for spec in specs for name in (spec.action, spec.precondition_action, spec.rollback_action, *spec.fallbacks) if name}
         for name in names:
             self.register_action(name, lambda _action=name, **kwargs: executor(_action, kwargs))
-        return self.run(parsed.objective, specs, confirmed_steps=confirmed_steps, mission_id=str(mission_id), existing_graph=TaskGraph.from_dict(record["graph"]), plan_payload=parsed.as_dict())
+        return self.run(parsed.objective, specs, confirmed_steps=confirmed_steps, mission_id=str(mission_id), existing_graph=TaskGraph.from_dict(record["graph"]), on_step=on_step, plan_payload=parsed.as_dict())
 
     @staticmethod
     def _spec_from_plan_step(step: PlannedStep) -> StepSpec:

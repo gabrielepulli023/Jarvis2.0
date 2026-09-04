@@ -1163,7 +1163,11 @@ class JarvisWorker(QThread):
             if len(missions) == 1:
                 from jarvis_missions import MissionExecutionAdapter
                 checkpoint = missions[0].get("checkpoint") or {}
-                result = CORE_RUNTIME.missions.resume_preflight(missions[0]["id"], checkpoint["task"], executor=MissionExecutionAdapter(CORE_RUNTIME.skills))
+                orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
+                observer = orchestrator.observe if orchestrator is not None else None
+                result = CORE_RUNTIME.missions.resume_preflight(missions[0]["id"], checkpoint["task"], executor=MissionExecutionAdapter(CORE_RUNTIME.skills), on_step=observer)
+                if orchestrator is not None and result.get("status") != "waiting_user":
+                    orchestrator.finish(missions[0]["id"], result.get("status", "unknown"), "Mission resumed")
                 self._risposta_locale("Missione ripresa." if result.get("status") == "completed" else "Missione ancora in esecuzione.")
                 return True
             if len(missions) > 1:
@@ -1183,7 +1187,10 @@ class JarvisWorker(QThread):
             binding = CORE_RUNTIME.missions.mission_for_action(confirmed_action) if confirmed_action else None
             if binding and result.get("successo"):
                 from jarvis_missions import MissionExecutionAdapter
-                result = CORE_RUNTIME.missions.accept_confirmed_result(binding[0], binding[1], result, executor=MissionExecutionAdapter(CORE_RUNTIME.skills))
+                orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
+                result = CORE_RUNTIME.missions.accept_confirmed_result(binding[0], binding[1], result, executor=MissionExecutionAdapter(CORE_RUNTIME.skills), on_step=(orchestrator.observe if orchestrator is not None else None))
+                if orchestrator is not None and result.get("status") != "waiting_user":
+                    orchestrator.finish(binding[0], result.get("status", "unknown"), "Mission confirmation ingested")
             message = messaggio_risultato_operativo(result) if result.get("successo") else str(
                 result.get("messaggio") or "Conferma non eseguita."
             )

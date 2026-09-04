@@ -1,5 +1,7 @@
 from __future__ import annotations
 import threading
+import hashlib
+import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ class StepSpec:
     precondition_action: str | None = None
     precondition_arguments: dict | None = None
     precondition_expected: dict | None = None
+    precondition_risk: str = "safe"
     rollback_action: str | None = None
     rollback_arguments: dict | None = None
     rollback_risk: str = "safe"
@@ -46,6 +49,12 @@ class CancellationToken:
     @property
     def event(self):
         return self._event
+
+
+class _NestedConfirmationRequired(Exception):
+    def __init__(self, checkpoint):
+        super().__init__("nested confirmation required")
+        self.checkpoint = checkpoint
 
 
 class MissionEngine:
@@ -94,12 +103,16 @@ class MissionEngine:
         existing_graph: TaskGraph | None = None,
         plan_payload: dict | None = None,
         on_step: Callable[[str, str, dict, dict], None] | None = None,
+        confirmed_nested: dict | None = None,
     ) -> dict:
         token = token or CancellationToken()
         with self._token_lock:
             self._tokens.add(token)
         graph = existing_graph or self.build(specs)
         mission_id = mission_id or self.store.create(objective, graph, plan_payload)
+        existing = self.store.get(mission_id)
+        if existing and existing.get("status") == "cancelled":
+            return existing
         self._tokens_by_mission[mission_id] = token
         by_id = {x.id: x for x in specs}
         if dry_run:
@@ -128,6 +141,10 @@ class MissionEngine:
         for task_id in confirmed_steps:
             if task_id in graph.tasks and graph.tasks[task_id].status == TaskStatus.WAITING_USER:
                 graph.tasks[task_id].status = TaskStatus.READY
+        if isinstance(confirmed_nested, Mapping):
+            nested_task = str(confirmed_nested.get("step_id"))
+            if nested_task in graph.tasks and graph.tasks[nested_task].status == TaskStatus.WAITING_USER:
+                graph.tasks[nested_task].status = TaskStatus.READY
         waiting = False
         while True:
             if token.cancelled:
@@ -141,6 +158,22 @@ class MissionEngine:
                 if token.cancelled:
                     break
                 spec = by_id[task.id]
+                if (
+                    isinstance(confirmed_nested, Mapping)
+                    and confirmed_nested.get("nested_action") == "fallback"
+                    and str(confirmed_nested.get("step_id")) == str(task.id)
+                ):
+                    graph.start(task.id)
+                    recovered = self._recover(spec, task.id, mission_id, token, confirmed_nested)
+                    if recovered is not None:
+                        recovered_result, recovered_proof = recovered
+                        graph.complete(task.id, recovered_result, [recovered_proof.as_dict()])
+                        self.store.save(mission_id, graph, status="running", checkpoint={"task": task.id, "evidence": recovered_proof.as_dict()}, event="task.recovered")
+                        if on_step:
+                            on_step(mission_id, confirmed_nested.get("action"), dict(confirmed_nested.get("arguments") or {}), recovered_result)
+                        continue
+                    graph.fail(task.id, "confirmed fallback could not be verified")
+                    continue
                 try:
                     arguments = self._resolve_arguments(spec.arguments, graph, task)
                 except ValueError as exc:
@@ -183,13 +216,18 @@ class MissionEngine:
                         )
                         continue
                     pre_arguments = self._resolve_arguments(spec.precondition_arguments or {}, graph, task)
-                    pre_permission = self.authorize(spec.precondition_action, pre_arguments, self._risk(spec.precondition_action, "safe"))
-                    if pre_permission != "allow":
-                        graph.wait_for_user(task.id, "precondition authorization required") if pre_permission == "confirm" else graph.skip(task.id, "precondition permission denied")
-                        self.store.save(mission_id, graph, status="waiting_user" if pre_permission == "confirm" else "running", checkpoint={"task": task.id, "precondition": spec.precondition_action}, event="task.precondition_authorization")
-                        if pre_permission == "confirm":
-                            waiting = True
-                            break
+                    pre_risk = self._risk(spec.precondition_action, spec.precondition_risk)
+                    pre_permission = self.authorize(spec.precondition_action, pre_arguments, pre_risk)
+                    pre_confirmed = self._nested_matches(confirmed_nested, "precondition", task.id, spec.precondition_action, pre_arguments, pre_risk)
+                    if pre_permission == "confirm" and not pre_confirmed:
+                        graph.wait_for_user(task.id, "precondition authorization required")
+                        checkpoint = self._nested_checkpoint(mission_id, task.id, "precondition", spec.precondition_action, pre_arguments, pre_risk)
+                        self.store.save(mission_id, graph, status="waiting_user", checkpoint=checkpoint, event="task.precondition_authorization")
+                        waiting = True
+                        break
+                    if pre_permission == "deny" and not pre_confirmed:
+                        graph.skip(task.id, "precondition permission denied")
+                        self.store.save(mission_id, graph, status="running", checkpoint={"task": task.id, "precondition": spec.precondition_action}, event="task.precondition_authorization")
                         continue
                     pre_result = dict(precondition(**pre_arguments) or {})
                     pre_proof = self.evidence.verify(
@@ -249,7 +287,13 @@ class MissionEngine:
                     graph.complete(task.id, dict(result or {}), [proof.as_dict()])
                     event = "task.completed"
                 else:
-                    recovered = self._recover(spec, token) if self._retry_safe(spec.action) else None
+                    try:
+                        recovered = self._recover(spec, task.id, mission_id, token, confirmed_nested) if self._retry_safe(spec.action) else None
+                    except _NestedConfirmationRequired as exc:
+                        graph.wait_for_user(task.id, "fallback authorization required")
+                        self.store.save(mission_id, graph, status="waiting_user", checkpoint=exc.checkpoint, event="task.fallback_authorization")
+                        waiting = True
+                        break
                     if recovered is not None:
                         recovered_result, recovered_proof = recovered
                         proof = recovered_proof
@@ -278,10 +322,13 @@ class MissionEngine:
         status = self._critic_status(graph)
         rollback = []
         if status == "failed":
-            rollback = self._rollback(specs, graph)
+            rollback = self._rollback(specs, graph, mission_id, confirmed_nested)
+            if any(row.get("waiting_user") for row in rollback):
+                status = "waiting_user"
         final_checkpoint = {"progress": graph.progress(), "rollback": rollback}
         if status == "waiting_user":
-            final_checkpoint = {**(self.store.get(mission_id) or {}).get("checkpoint", {}), **final_checkpoint}
+            pending = next((row.get("checkpoint") for row in rollback if row.get("waiting_user") and row.get("checkpoint")), None)
+            final_checkpoint = {**(pending or (self.store.get(mission_id) or {}).get("checkpoint", {})), **final_checkpoint}
         self.store.save(
             mission_id,
             graph,
@@ -305,19 +352,27 @@ class MissionEngine:
             self._tokens_by_mission.pop(mission_id, None)
         return result
 
-    def _recover(self, spec: StepSpec, token: CancellationToken):
+    def _recover(self, spec: StepSpec, step_id: str, mission_id: str, token: CancellationToken, confirmed_nested=None):
         if self.recovery is None or not spec.fallbacks:
             return None
         latest: dict[str, dict] = {"result": {}}
         strategies = []
-        for fallback in spec.fallbacks:
+        metadata = []
+        for index, fallback in enumerate(spec.fallbacks):
             name = str(fallback.get("action")) if isinstance(fallback, Mapping) else str(fallback)
             fallback_arguments = dict(fallback.get("arguments") or {}) if isinstance(fallback, Mapping) else {}
             fallback_expected = dict(fallback.get("expected") or {}) if isinstance(fallback, Mapping) else spec.expected
             action = self._actions.get(name)
             if action is None:
                 continue
-            if self.authorize(name, fallback_arguments, self._risk(name, str(fallback.get("risk", "safe")) if isinstance(fallback, Mapping) else "safe")) != "allow":
+            declared_risk = str(fallback.get("risk", "safe")) if isinstance(fallback, Mapping) else "safe"
+            risk = self._risk(name, declared_risk)
+            fallback_id = str(fallback.get("id", f"fallback-{index}")) if isinstance(fallback, Mapping) else f"fallback-{index}"
+            selected = self._nested_matches(confirmed_nested, "fallback", step_id, name, fallback_arguments, risk, index=index, fallback_id=fallback_id)
+            permission = self.authorize(name, fallback_arguments, risk)
+            if permission == "confirm" and not selected:
+                raise _NestedConfirmationRequired(self._nested_checkpoint(mission_id, step_id, "fallback", name, fallback_arguments, risk, fallback_index=index, fallback_id=fallback_id))
+            if permission == "deny" and not selected:
                 continue
 
             def execute(action=action, fallback_arguments=fallback_arguments):
@@ -328,6 +383,11 @@ class MissionEngine:
                 return self.confidence.sufficient([self.evidence.verify(name, fallback_expected, result)])
 
             strategies.append(RecoveryStrategy(name, execute, verify))
+            metadata.append({"action": name, "arguments": fallback_arguments, "expected": fallback_expected, "risk": risk, "index": index, "id": fallback_id, "selected": selected})
+            if selected:
+                result = dict(action(**fallback_arguments) or {})
+                proof = self.evidence.verify(name, fallback_expected, result)
+                return (result, proof) if self.confidence.sufficient([proof]) else None
         if not strategies:
             return None
         outcome = self.recovery.run(
@@ -336,7 +396,10 @@ class MissionEngine:
         if not outcome.success:
             return None
         result = dict(latest["result"])
-        proof = self.evidence.verify(outcome.strategy or spec.action, fallback_expected, result)
+        chosen = next((row for row in metadata if row["action"] == outcome.strategy), None)
+        if chosen is None:
+            return None
+        proof = self.evidence.verify(chosen["action"], chosen["expected"], result)
         return result, proof
 
     @classmethod
@@ -398,7 +461,7 @@ class MissionEngine:
             return
         graph.fail(task.id, error)
 
-    def _rollback(self, specs: list[StepSpec], graph: TaskGraph) -> list[dict]:
+    def _rollback(self, specs: list[StepSpec], graph: TaskGraph, mission_id: str, confirmed_nested=None) -> list[dict]:
         rows = []
         for spec in reversed(specs):
             if graph.tasks[spec.id].status != TaskStatus.COMPLETED or not spec.rollback_action:
@@ -407,11 +470,18 @@ class MissionEngine:
             if action is None:
                 rows.append({"step": spec.id, "success": False, "error": "unknown rollback"})
                 continue
-            if self.authorize(spec.rollback_action, dict(spec.rollback_arguments or {}), self._risk(spec.rollback_action, spec.rollback_risk)) != "allow":
-                rows.append({"step": spec.id, "success": False, "error": "rollback authorization required"})
+            arguments = dict(spec.rollback_arguments or {})
+            risk = self._risk(spec.rollback_action, spec.rollback_risk)
+            selected = self._nested_matches(confirmed_nested, "rollback", spec.id, spec.rollback_action, arguments, risk)
+            permission = self.authorize(spec.rollback_action, arguments, risk)
+            if permission == "confirm" and not selected:
+                rows.append({"step": spec.id, "success": False, "waiting_user": True, "error": "rollback authorization required", "checkpoint": self._nested_checkpoint(mission_id, spec.id, "rollback", spec.rollback_action, arguments, risk)})
+                continue
+            if permission == "deny" and not selected:
+                rows.append({"step": spec.id, "success": False, "error": "rollback denied"})
                 continue
             try:
-                result = dict(action(**dict(spec.rollback_arguments or {})) or {})
+                result = dict(action(**arguments) or {})
                 rows.append(
                     {
                         "step": spec.id,
@@ -422,6 +492,30 @@ class MissionEngine:
             except Exception as exc:
                     rows.append({"step": spec.id, "success": False, "error": redact(f"{type(exc).__name__}: {exc}")})
         return rows
+
+    @staticmethod
+    def _argument_fingerprint(arguments):
+        payload = json.dumps(arguments or {}, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _nested_checkpoint(cls, mission_id, step_id, nested_action, action, arguments, risk, **extra):
+        return {"mission_id": str(mission_id), "step_id": str(step_id), "nested_action": nested_action, "action": str(action), "arguments": dict(arguments or {}), "arguments_fingerprint": cls._argument_fingerprint(arguments), "risk": str(risk), "confirmation_mode": "nested_preflight", **extra}
+
+    @classmethod
+    def _nested_matches(cls, binding, nested_action, step_id, action, arguments, risk, *, index=None, fallback_id=None):
+        if not isinstance(binding, Mapping) or binding.get("nested_action") != nested_action or str(binding.get("step_id")) != str(step_id) or str(binding.get("action")) != str(action) or str(binding.get("risk")) != str(risk):
+            return False
+        if binding.get("arguments_fingerprint"):
+            if binding["arguments_fingerprint"] != cls._argument_fingerprint(arguments):
+                return False
+        elif dict(binding.get("arguments") or {}) != dict(arguments or {}):
+            return False
+        if index is not None and str(binding.get("fallback_index")) != str(index):
+            return False
+        if fallback_id is not None and str(binding.get("fallback_id")) != str(fallback_id):
+            return False
+        return True
 
     def _critic_status(self, graph: TaskGraph) -> str:
         statuses = {x.status for x in graph.tasks.values()}
@@ -489,7 +583,7 @@ class MissionEngine:
             if row.get("status") != "waiting_user":
                 continue
             record = self.store.get(row["id"])
-            if (record.get("checkpoint") or {}).get("confirmation_mode") == "preflight":
+            if (record.get("checkpoint") or {}).get("confirmation_mode") in {"preflight", "nested_preflight"}:
                 rows.append(record)
         return rows
 
@@ -510,7 +604,43 @@ class MissionEngine:
             raise ValueError("preflight binding mismatch")
         return self.resume(mission_id, executor=executor, confirmed_steps={step_id}, on_step=on_step)
 
-    def resume(self, mission_id: str, *, executor: Callable[[str, dict], dict], confirmed_steps: set[str] | None = None, on_step=None) -> dict:
+    def resume_nested_confirmation(self, mission_id: str, *, step_id: str, nested_action: str, action: str, fallback_index=None, fallback_id=None, executor: Callable[[str, dict], dict], on_step=None) -> dict:
+        record = self.store.get(str(mission_id))
+        if not record:
+            raise KeyError(mission_id)
+        if record.get("status") == "cancelled" or (record.get("graph") or {}).get("cancelled"):
+            return record
+        if record.get("status") != "waiting_user":
+            raise ValueError("mission is not awaiting nested confirmation")
+        checkpoint = record.get("checkpoint") or {}
+        if checkpoint.get("confirmation_mode") != "nested_preflight" or checkpoint.get("nested_action") != nested_action or str(checkpoint.get("step_id")) != str(step_id) or str(checkpoint.get("action")) != str(action):
+            raise ValueError("nested confirmation binding mismatch")
+        if nested_action == "fallback" and (str(checkpoint.get("fallback_index")) != str(fallback_index) or str(checkpoint.get("fallback_id")) != str(fallback_id)):
+            raise ValueError("fallback confirmation binding mismatch")
+        parsed = MissionPlan.from_dict(record.get("plan") or {})
+        if self.catalog is not None:
+            from .planner import PlanValidator
+            parsed = PlanValidator(self.catalog).validate(parsed)
+        step = next((item for item in parsed.steps if item.id == str(step_id)), None)
+        if step is None:
+            raise ValueError("nested action step unavailable")
+        specs = {item.id: self._spec_from_plan_step(item) for item in parsed.steps}
+        spec = specs[str(step_id)]
+        if nested_action == "precondition":
+            nested_args = self._resolve_arguments(spec.precondition_arguments or {}, TaskGraph.from_dict(record["graph"]), TaskGraph.from_dict(record["graph"]).tasks[str(step_id)])
+            nested_risk = self._risk(spec.precondition_action, spec.precondition_risk)
+        elif nested_action == "rollback":
+            nested_args, nested_risk = dict(spec.rollback_arguments or {}), self._risk(spec.rollback_action, spec.rollback_risk)
+        else:
+            fallback = spec.fallbacks[int(fallback_index)]
+            nested_args = dict(fallback.get("arguments") or {}) if isinstance(fallback, Mapping) else {}
+            nested_risk = self._risk(action, str(fallback.get("risk", "safe")) if isinstance(fallback, Mapping) else "safe")
+        if not self._nested_matches(checkpoint, nested_action, step_id, action, nested_args, nested_risk, index=fallback_index if nested_action == "fallback" else None, fallback_id=fallback_id if nested_action == "fallback" else None):
+            raise ValueError("nested action is stale or changed")
+        confirmed = dict(checkpoint)
+        return self.resume(mission_id, executor=executor, on_step=on_step, confirmed_nested=confirmed)
+
+    def resume(self, mission_id: str, *, executor: Callable[[str, dict], dict], confirmed_steps: set[str] | None = None, on_step=None, confirmed_nested: dict | None = None) -> dict:
         record = self.store.get(str(mission_id))
         if not record:
             raise KeyError(mission_id)
@@ -526,11 +656,11 @@ class MissionEngine:
         names.update(str(item.get("action")) if isinstance(item, Mapping) else str(item) for spec in specs for item in spec.fallbacks)
         for name in names:
             self.register_action(name, lambda _action=name, **kwargs: executor(_action, kwargs))
-        return self.run(parsed.objective, specs, confirmed_steps=confirmed_steps, mission_id=str(mission_id), existing_graph=TaskGraph.from_dict(record["graph"]), on_step=on_step, plan_payload=parsed.as_dict())
+        return self.run(parsed.objective, specs, confirmed_steps=confirmed_steps, mission_id=str(mission_id), existing_graph=TaskGraph.from_dict(record["graph"]), on_step=on_step, plan_payload=parsed.as_dict(), confirmed_nested=confirmed_nested)
 
     @staticmethod
     def _spec_from_plan_step(step: PlannedStep) -> StepSpec:
-        return StepSpec(step.id, step.label, step.action, dict(step.arguments), dict(step.expected), frozenset(step.dependencies), step.timeout, step.max_attempts, step.risk, precondition_action=(step.precondition or {}).get("action") if step.precondition else None, precondition_arguments=(step.precondition or {}).get("arguments") if step.precondition else None, precondition_expected=(step.precondition or {}).get("expected") if step.precondition else None, fallbacks=step.fallbacks, rollback_action=(step.rollback or {}).get("action") if step.rollback else None, rollback_arguments=(step.rollback or {}).get("arguments") if step.rollback else None, rollback_risk=(step.rollback or {}).get("risk", "safe") if step.rollback else "safe")
+        return StepSpec(step.id, step.label, step.action, dict(step.arguments), dict(step.expected), frozenset(step.dependencies), step.timeout, step.max_attempts, step.risk, precondition_action=(step.precondition or {}).get("action") if step.precondition else None, precondition_arguments=(step.precondition or {}).get("arguments") if step.precondition else None, precondition_expected=(step.precondition or {}).get("expected") if step.precondition else None, precondition_risk=(step.precondition or {}).get("risk", "safe") if step.precondition else "safe", fallbacks=step.fallbacks, rollback_action=(step.rollback or {}).get("action") if step.rollback else None, rollback_arguments=(step.rollback or {}).get("arguments") if step.rollback else None, rollback_risk=(step.rollback or {}).get("risk", "safe") if step.rollback else "safe")
 
     def cancel_all(self) -> int:
         with self._token_lock:

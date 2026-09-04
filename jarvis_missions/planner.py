@@ -134,20 +134,27 @@ class PlanValidator:
                     raise ValueError("unknown fallback")
                 fallback_args = dict(fallback.get("arguments") or {}) if isinstance(fallback, Mapping) else {}
                 self._validate_action(fallback_name, fallback_args)
-                if self.catalog and str((self.catalog.manifest(fallback_name) or {}).get("risk", "safe")) == "forbidden":
+                fallback_declared = str(fallback.get("risk", "safe")) if isinstance(fallback, Mapping) else "safe"
+                fallback_risk = max((fallback_declared, str((self.catalog.manifest(fallback_name) or {}).get("risk", "safe")) if self.catalog else "safe"), key=lambda item: risk_order[item])
+                if fallback_risk == "forbidden":
                     raise ValueError("forbidden fallback")
             rollback = row.get("rollback")
             if rollback:
                 if not isinstance(rollback, Mapping) or str(rollback.get("action")) not in self.names:
                     raise ValueError("unknown rollback")
-                self._validate_action(str(rollback["action"]), dict(rollback.get("arguments") or {}))
+                rollback_name = str(rollback["action"])
+                self._validate_action(rollback_name, dict(rollback.get("arguments") or {}))
+                rollback_risk = max((str(rollback.get("risk", "safe")), str((self.catalog.manifest(rollback_name) or {}).get("risk", "safe")) if self.catalog else "safe"), key=lambda item: risk_order[item])
+                if rollback_risk == "forbidden":
+                    raise ValueError("forbidden rollback")
             precondition = row.get("precondition")
             if precondition:
                 if not isinstance(precondition, Mapping) or str(precondition.get("action")) not in self.names:
                     raise ValueError("unknown precondition")
                 pre_name = str(precondition["action"])
                 pre_manifest = self.catalog.manifest(pre_name) if self.catalog else None
-                if str((pre_manifest or {}).get("risk", "safe")) == "forbidden":
+                pre_risk = max((str(precondition.get("risk", "safe")), str((pre_manifest or {}).get("risk", "safe"))), key=lambda item: risk_order[item])
+                if pre_risk == "forbidden":
                     raise ValueError("forbidden precondition")
                 self._validate_action(pre_name, dict(precondition.get("arguments") or {}))
             deps = tuple(str(x) for x in row.get("dependencies", ()))

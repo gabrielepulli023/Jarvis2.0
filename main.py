@@ -1165,7 +1165,19 @@ class JarvisWorker(QThread):
                 checkpoint = missions[0].get("checkpoint") or {}
                 orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
                 observer = orchestrator.observe if orchestrator is not None else None
-                result = CORE_RUNTIME.missions.resume_preflight(missions[0]["id"], checkpoint["task"], executor=MissionExecutionAdapter(CORE_RUNTIME.skills), on_step=observer)
+                if checkpoint.get("confirmation_mode") == "nested_preflight":
+                    result = CORE_RUNTIME.missions.resume_nested_confirmation(
+                        missions[0]["id"],
+                        step_id=checkpoint["step_id"],
+                        nested_action=checkpoint["nested_action"],
+                        action=checkpoint["action"],
+                        fallback_index=checkpoint.get("fallback_index"),
+                        fallback_id=checkpoint.get("fallback_id"),
+                        executor=MissionExecutionAdapter(CORE_RUNTIME.skills),
+                        on_step=observer,
+                    )
+                else:
+                    result = CORE_RUNTIME.missions.resume_preflight(missions[0]["id"], checkpoint["task"], executor=MissionExecutionAdapter(CORE_RUNTIME.skills), on_step=observer)
                 if orchestrator is not None and result.get("status") != "waiting_user":
                     orchestrator.finish(missions[0]["id"], result.get("status", "unknown"), "Mission resumed")
                 self._risposta_locale("Missione ripresa." if result.get("status") == "completed" else "Missione ancora in esecuzione.")

@@ -6,6 +6,8 @@ from unittest.mock import patch
 from jarvis_missions.engine import MissionEngine
 from jarvis_missions.planner import MissionPlanner, MissionToolCatalogAdapter
 from jarvis_missions.store import MissionStore
+from jarvis_core.events import EventBus
+from jarvis_core.recovery import RecoveryEngine, RecoveryPolicy
 
 
 class _Registry:
@@ -127,6 +129,83 @@ class CanonicalMissionTests(unittest.TestCase):
         planner = MissionPlanner(MissionToolCatalogAdapter(_Registry()))
         plan = planner.plan("risk", {"steps": [{"id": "s", "action": "open", "risk": "safe", "arguments": {"path": "x"}}]})
         self.assertEqual(plan.steps[0].risk, "sensitive")
+
+    def test_nested_forbidden_validation_uses_declared_and_manifest_risk(self):
+        planner = MissionPlanner(MissionToolCatalogAdapter(_Registry()))
+        cases = [
+            {"precondition": {"action": "search", "risk": "forbidden"}},
+            {"fallbacks": [{"action": "search", "risk": "forbidden"}]},
+            {"rollback": {"action": "search", "risk": "forbidden"}},
+            {"precondition": {"action": "never"}},
+            {"fallbacks": [{"action": "never"}]},
+            {"rollback": {"action": "never"}},
+        ]
+        for nested in cases:
+            with self.subTest(nested=nested), self.assertRaises(ValueError):
+                planner.plan("nested-risk", {"steps": [{"id": "s", "action": "search", **nested}]})
+
+    def test_precondition_nested_confirmation_bridge_exactly_once(self):
+        engine = self.make_engine(authorize=lambda action, args, risk: "confirm" if action == "search" and risk == "sensitive" else "allow")
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("precondition", {"steps": [{
+            "id": "s", "action": "open", "arguments": {"path": "x"}, "expected": {"ok": True},
+            "precondition": {"action": "search", "arguments": {"query": "ready"}, "expected": {"ok": True}, "risk": "sensitive"},
+        }]})
+        first = engine.run_plan(plan, executor=lambda action, args: {"success": True, "observed": {"ok": True}})
+        self.assertEqual(first["status"], "waiting_user")
+        checkpoint = first["checkpoint"]
+        self.assertEqual(checkpoint["nested_action"], "precondition")
+        worker, *patches = self._worker_bridge(engine, [], {})
+        with patches[0], patches[1], patches[2], patches[3]:
+            self.assertTrue(worker._comando_memoria_o_conferma("Confermo"))
+        self.assertEqual(engine.catalog.registry.executed, ["search", "open"])
+        self.assertEqual(engine.store.get(first["id"])["status"], "completed")
+        self.assertEqual(checkpoint["mission_id"], first["id"])
+
+    def test_sensitive_fallback_waits_then_executes_once_and_uses_f1_expected(self):
+        recovery = RecoveryEngine(EventBus(), RecoveryPolicy(max_retries=0, action_timeout=.2, global_timeout=1))
+        calls = []
+        engine = MissionEngine(MissionStore(Path(tempfile.mkdtemp()) / "missions.db"), authorize=lambda action, args, risk: "confirm" if action == "f1" else "allow")
+        engine.recovery = recovery
+        engine.register_action("primary", lambda: {"successo": True, "observed": {"bad": True}})
+        engine.register_action("f1", lambda: (calls.append("f1") or {"successo": True, "observed": {"one": True}}))
+        engine.register_action("f2", lambda: (calls.append("f2") or {"successo": True, "observed": {"two": True}}))
+        spec = __import__("jarvis_missions.engine", fromlist=["StepSpec"]).StepSpec(
+            "s", "step", "primary", {}, {"done": True}, max_attempts=1,
+            fallbacks=({"id": "F1", "action": "f1", "expected": {"one": True}, "risk": "sensitive"}, {"id": "F2", "action": "f2", "expected": {"two": True}}),
+        )
+        mission = engine.run("fallback", [spec], plan_payload={"objective": "fallback", "steps": [{"id": "s", "action": "primary", "expected": {"done": True}, "fallbacks": list(spec.fallbacks)}]})
+        self.assertEqual(mission["status"], "waiting_user")
+        self.assertEqual(calls, [])
+        resumed = engine.resume_nested_confirmation(mission["id"], step_id="s", nested_action="fallback", action="f1", fallback_index=0, fallback_id="F1", executor=lambda action, args: (calls.append(action) or {"success": True, "observed": {"one": True}}))
+        self.assertEqual(resumed["status"], "completed")
+        self.assertEqual(calls, ["f1"])
+        self.assertEqual(resumed["graph"]["tasks"][0]["evidence"][0]["expected"], "{'one': True}")
+        recovery.shutdown()
+
+    def test_sensitive_rollback_waits_and_keeps_failed_semantics(self):
+        calls = []
+        engine = MissionEngine(MissionStore(Path(tempfile.mkdtemp()) / "missions.db"), authorize=lambda action, args, risk: "confirm" if action == "undo" else "allow")
+        engine.register_action("ok", lambda: {"successo": True, "observed": {"ok": True}})
+        engine.register_action("bad", lambda: {"successo": False})
+        engine.register_action("undo", lambda: (calls.append("undo") or {"successo": True}))
+        from jarvis_missions.engine import StepSpec
+        specs = [StepSpec("a", "ok", "ok", {}, {"ok": True}, rollback_action="undo", rollback_risk="sensitive"), StepSpec("b", "bad", "bad", {}, {}, frozenset({"a"}), max_attempts=1)]
+        mission = engine.run("rollback", specs, plan_payload={"objective": "rollback", "steps": [{"id": "a", "action": "ok", "expected": {"ok": True}, "rollback": {"action": "undo", "risk": "sensitive"}}, {"id": "b", "action": "bad", "dependencies": ["a"], "max_attempts": 1}]})
+        self.assertEqual(mission["status"], "waiting_user")
+        self.assertEqual(calls, [])
+        resumed = engine.resume_nested_confirmation(mission["id"], step_id="a", nested_action="rollback", action="undo", executor=lambda action, args: (calls.append(action) or {"success": True}))
+        self.assertEqual(calls, ["undo"])
+        self.assertEqual(resumed["status"], "failed")
+
+    def test_cancelled_nested_confirmation_never_executes(self):
+        calls = []
+        engine = self.make_engine(authorize=lambda action, args, risk: "confirm" if action == "search" else "allow")
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("cancel", {"steps": [{"id": "s", "action": "open", "precondition": {"action": "search", "risk": "sensitive"}}]})
+        mission = engine.run_plan(plan, executor=lambda action, args: (calls.append(action) or {"success": True, "observed": {"ok": True}}))
+        engine.cancel(mission["id"])
+        resumed = engine.resume_nested_confirmation(mission["id"], step_id="s", nested_action="precondition", action="search", executor=lambda action, args: calls.append(action))
+        self.assertEqual(resumed["status"], "cancelled")
+        self.assertEqual(calls, [])
 
     def _worker_bridge(self, engine, pending, confirmed):
         import brain

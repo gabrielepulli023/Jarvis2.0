@@ -1,4 +1,6 @@
+import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -153,6 +155,45 @@ class Phase6Tests(unittest.TestCase):
             self.assertLessEqual(len(voice.calls), 1)
             self.assertEqual(engine.snapshot()["metrics"]["candidates"], 1000)
             self.assertNotIn("execute", dir(engine))
+
+    def test_preference_persist_and_stop_have_one_lock_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preferences.json"
+            bus = EventBus(); engine = CompanionEngine(bus, StateManager(bus), Voice(), persistence_path=path)
+            engine.start()
+            persist_entered = threading.Event(); release_persist = threading.Event()
+
+            class GateLock:
+                def __init__(self): self.lock = threading.Lock()
+                def __enter__(self):
+                    self.lock.acquire(); persist_entered.set(); release_persist.wait(2); return self
+                def __exit__(self, *_): self.lock.release()
+
+            engine._persist_lock = GateLock()
+            mutation_done = threading.Event(); stop_done = threading.Event(); errors = []
+
+            def mutate():
+                try: engine.set_enabled(False)
+                except Exception as exc: errors.append(exc)
+                finally: mutation_done.set()
+
+            def stop():
+                try: engine.stop()
+                except Exception as exc: errors.append(exc)
+                finally: stop_done.set()
+
+            first = threading.Thread(target=mutate); first.start(); self.assertTrue(persist_entered.wait(1))
+            second = threading.Thread(target=stop); second.start()
+            for _ in range(20):
+                if not engine.snapshot()["running"]: break
+                threading.Event().wait(.01)
+            self.assertFalse(engine.snapshot()["running"])
+            release_persist.set()
+            self.assertTrue(mutation_done.wait(2)); first.join(1); second.join(1)
+            self.assertFalse(first.is_alive()); self.assertFalse(second.is_alive()); self.assertFalse(errors)
+            self.assertFalse(engine.snapshot()["running"])
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIn(persisted["config"]["enabled"], (True, False))
 
 
 if __name__ == "__main__": unittest.main()

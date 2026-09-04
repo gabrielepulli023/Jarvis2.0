@@ -154,7 +154,7 @@ class CompanionEngine:
             if self._unsubscribe:
                 self._unsubscribe()
             self._unsubscribe, self._running = None, False
-            self._persist()
+        self._persist()
 
     def set_enabled(self, enabled: bool) -> None:
         value = self._parse_bool(enabled)

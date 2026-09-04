@@ -37,6 +37,20 @@ class UnifiedCognitiveCoreTests(unittest.TestCase):
                 self.assertEqual(decision.target, target)
                 self.assertEqual(decision.target_type, "application")
                 self.assertTrue(decision.needs_tools)
+        for text, target in (
+            ("Apri la cartella Download", "cartella Download"),
+            ("Apri il documento Relazione", "documento Relazione"),
+            ("Apri il file appunti", "file appunti"),
+            ("Apri Chrome, cerca YouTube e poi riproduci il primo video", "Chrome"),
+            ("Apri Visual Studio Code e poi esegui i test", "Visual Studio Code"),
+            ("Fammi partire Discord", "Discord"),
+            ("Start Discord", "Discord"),
+        ):
+            with self.subTest(text=text):
+                decision = self.core.decide(text)
+                self.assertEqual(decision.target, target)
+                self.assertTrue(decision.needs_tools)
+        self.assertTrue(self.core.decide("Apri Chrome, cerca YouTube e poi riproduci il primo video").mission_required)
         for text in ("Come apro Discord?", "Come si chiude Visual Studio Code?", "Non aprire Discord"):
             with self.subTest(text=text):
                 decision = self.core.decide(text)

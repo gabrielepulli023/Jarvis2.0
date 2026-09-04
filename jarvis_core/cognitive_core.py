@@ -114,7 +114,10 @@ def _stem(token: str) -> str:
     return token[: max(4, min(7, len(token)))]
 
 
-_APP_ACTION_RE = re.compile(r"\b(?:apr\w*|avvi\w*|lanci\w*|chiud\w*|termin\w*)\b", re.I)
+_APP_ACTION_RE = re.compile(
+    r"\b(?:" + _ACTION_FAMILIES["open"] + r"|" + _ACTION_FAMILIES["close"] + r")\b", re.I
+)
+_CLAUSE_ACTION_RE = re.compile(r"\b(?:esegui\w*|" + "|".join(_ACTION_FAMILIES.values()) + r")\b", re.I)
 _TARGET_WRAPPER_RE = re.compile(r"^(?:il|lo|la|i|gli|le|un|una|uno)\s+", re.I)
 
 
@@ -124,6 +127,10 @@ def _extract_application_target(text: str) -> str | None:
     if not match:
         return None
     candidate = text[match.end():].strip(" \t.,!?;:")
+    for boundary in re.finditer(r",|\s+(?:e\s+poi|poi|quindi|dopo)\s+|\s+e\s+", candidate, re.I):
+        if _CLAUSE_ACTION_RE.match(candidate[boundary.end():].lstrip()):
+            candidate = candidate[:boundary.start()].rstrip(" \t.,!?;:")
+            break
     candidate = re.sub(r"^(?:mi|m[iì]|per\s+favore)\s+", "", candidate, flags=re.I)
     candidate = _TARGET_WRAPPER_RE.sub("", candidate).strip(" \t.,!?;:")
     candidate = re.sub(r"\s+per\s+favore$", "", candidate, flags=re.I).strip(" \t.,!?;:")
@@ -183,7 +190,7 @@ class UnifiedCognitiveCore:
         reference_type = str(getattr(reference, "reference_type", "") or "").casefold()
         if reference_type in {"artifact", "path", "file", "result"}:
             return "artifact"
-        if target and (target.casefold() in {"file", "cartella", "documento"} or re.search(r"[\\/:]", target) or re.search(r"\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b", target, re.I)):
+        if target and (re.match(r"^(?:file|cartella|documento)\b", target, re.I) or re.search(r"[\\/:]", target) or re.search(r"\.(?:txt|pdf|docx?|xlsx?|csv|json|py|zip)\b", target, re.I)):
             return "artifact"
         if action in {"observe"} or (target and _UI_RE.search(target)):
             return "ui"

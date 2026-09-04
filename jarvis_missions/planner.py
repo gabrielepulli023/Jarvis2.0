@@ -20,7 +20,7 @@ class PlannedStep:
     timeout: float = 30.0
     max_attempts: int = 1
     risk: str = "safe"
-    fallbacks: tuple[str, ...] = ()
+    fallbacks: tuple[Any, ...] = ()
     rollback: Mapping[str, Any] | None = None
     precondition: Mapping[str, Any] | None = None
 
@@ -127,9 +127,15 @@ class PlanValidator:
                 if any(key not in allowed for key in arguments):
                     raise ValueError(f"invalid arguments: {action}")
             self._validate_action(action, arguments)
-            fallbacks = tuple(str(x) for x in row.get("fallbacks", ()))
-            if any(x not in self.names for x in fallbacks):
-                raise ValueError("unknown fallback")
+            fallbacks = tuple(row.get("fallbacks", ()))
+            for fallback in fallbacks:
+                fallback_name = str(fallback.get("action")) if isinstance(fallback, Mapping) else str(fallback)
+                if fallback_name not in self.names:
+                    raise ValueError("unknown fallback")
+                fallback_args = dict(fallback.get("arguments") or {}) if isinstance(fallback, Mapping) else {}
+                self._validate_action(fallback_name, fallback_args)
+                if self.catalog and str((self.catalog.manifest(fallback_name) or {}).get("risk", "safe")) == "forbidden":
+                    raise ValueError("forbidden fallback")
             rollback = row.get("rollback")
             if rollback:
                 if not isinstance(rollback, Mapping) or str(rollback.get("action")) not in self.names:
@@ -154,7 +160,7 @@ class PlanValidator:
             if str(row.get("risk", "safe")) not in {"safe", "sensitive", "admin", "destructive", "forbidden"}:
                 raise ValueError("invalid risk")
         self._check_cycles({str(row["id"]): set(row.get("dependencies", ())) for row in rows})
-        steps = tuple(PlannedStep(str(row["id"]), str(row.get("label", row["id"]))[:200], str(row.get("action") or row.get("tool")), dict(row.get("arguments") or {}), dict(row.get("expected") or {}), tuple(str(x) for x in row.get("dependencies", ())), min(900.0, max(.01, float(row.get("timeout", 30)))), min(5, max(1, int(row.get("max_attempts", 1)))), max((str(row.get("risk", "safe")), str((self.catalog.manifest(str(row.get("action") or row.get("tool"))) or {}).get("risk", "safe"))), key=lambda item: {"safe": 0, "sensitive": 1, "admin": 2, "destructive": 3, "forbidden": 4}[item]), tuple(str(x) for x in row.get("fallbacks", ())), row.get("rollback"), row.get("precondition")) for row in rows)
+        steps = tuple(PlannedStep(str(row["id"]), str(row.get("label", row["id"]))[:200], str(row.get("action") or row.get("tool")), dict(row.get("arguments") or {}), dict(row.get("expected") or {}), tuple(str(x) for x in row.get("dependencies", ())), min(900.0, max(.01, float(row.get("timeout", 30)))), min(5, max(1, int(row.get("max_attempts", 1)))), max((str(row.get("risk", "safe")), str((self.catalog.manifest(str(row.get("action") or row.get("tool"))) or {}).get("risk", "safe"))), key=lambda item: {"safe": 0, "sensitive": 1, "admin": 2, "destructive": 3, "forbidden": 4}[item]), tuple(dict(x) if isinstance(x, Mapping) else str(x) for x in row.get("fallbacks", ())), row.get("rollback"), row.get("precondition")) for row in rows)
         return MissionPlan(str(value.get("objective") or "")[:1000], tuple(str(x)[:300] for x in list(value.get("success_criteria") or [])[:8]), steps, str(value.get("source", "planner"))[:30], int(value.get("version", 1)), str(value.get("risk_summary", "safe"))[:30])
 
     def _validate_action(self, name: str, arguments: dict) -> None:

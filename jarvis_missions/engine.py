@@ -113,6 +113,7 @@ class MissionEngine:
         existing = self.store.get(mission_id)
         if existing and existing.get("status") == "cancelled":
             return existing
+        rollback_completed = list(((existing or {}).get("checkpoint") or {}).get("rollback_completed") or [])[:16]
         self._tokens_by_mission[mission_id] = token
         by_id = {x.id: x for x in specs}
         if dry_run:
@@ -219,16 +220,16 @@ class MissionEngine:
                     pre_risk = self._risk(spec.precondition_action, spec.precondition_risk)
                     pre_permission = self.authorize(spec.precondition_action, pre_arguments, pre_risk)
                     pre_confirmed = self._nested_matches(confirmed_nested, "precondition", task.id, spec.precondition_action, pre_arguments, pre_risk)
+                    if pre_permission == "deny":
+                        graph.skip(task.id, "precondition permission denied")
+                        self.store.save(mission_id, graph, status="running", checkpoint={"task": task.id, "precondition": spec.precondition_action}, event="task.precondition_authorization")
+                        continue
                     if pre_permission == "confirm" and not pre_confirmed:
                         graph.wait_for_user(task.id, "precondition authorization required")
                         checkpoint = self._nested_checkpoint(mission_id, task.id, "precondition", spec.precondition_action, pre_arguments, pre_risk)
                         self.store.save(mission_id, graph, status="waiting_user", checkpoint=checkpoint, event="task.precondition_authorization")
                         waiting = True
                         break
-                    if pre_permission == "deny" and not pre_confirmed:
-                        graph.skip(task.id, "precondition permission denied")
-                        self.store.save(mission_id, graph, status="running", checkpoint={"task": task.id, "precondition": spec.precondition_action}, event="task.precondition_authorization")
-                        continue
                     pre_result = dict(precondition(**pre_arguments) or {})
                     pre_proof = self.evidence.verify(
                         spec.precondition_action, spec.precondition_expected or {}, pre_result
@@ -322,10 +323,10 @@ class MissionEngine:
         status = self._critic_status(graph)
         rollback = []
         if status == "failed":
-            rollback = self._rollback(specs, graph, mission_id, confirmed_nested)
+            rollback = self._rollback(specs, graph, mission_id, confirmed_nested, rollback_completed)
             if any(row.get("waiting_user") for row in rollback):
                 status = "waiting_user"
-        final_checkpoint = {"progress": graph.progress(), "rollback": rollback}
+        final_checkpoint = {"progress": graph.progress(), "rollback": rollback, "rollback_completed": rollback_completed[:16]}
         if status == "waiting_user":
             pending = next((row.get("checkpoint") for row in rollback if row.get("waiting_user") and row.get("checkpoint")), None)
             final_checkpoint = {**(pending or (self.store.get(mission_id) or {}).get("checkpoint", {})), **final_checkpoint}
@@ -370,10 +371,10 @@ class MissionEngine:
             fallback_id = str(fallback.get("id", f"fallback-{index}")) if isinstance(fallback, Mapping) else f"fallback-{index}"
             selected = self._nested_matches(confirmed_nested, "fallback", step_id, name, fallback_arguments, risk, index=index, fallback_id=fallback_id)
             permission = self.authorize(name, fallback_arguments, risk)
+            if permission == "deny":
+                continue
             if permission == "confirm" and not selected:
                 raise _NestedConfirmationRequired(self._nested_checkpoint(mission_id, step_id, "fallback", name, fallback_arguments, risk, fallback_index=index, fallback_id=fallback_id))
-            if permission == "deny" and not selected:
-                continue
 
             def execute(action=action, fallback_arguments=fallback_arguments):
                 latest["result"] = dict(action(**fallback_arguments) or {})
@@ -461,8 +462,9 @@ class MissionEngine:
             return
         graph.fail(task.id, error)
 
-    def _rollback(self, specs: list[StepSpec], graph: TaskGraph, mission_id: str, confirmed_nested=None) -> list[dict]:
+    def _rollback(self, specs: list[StepSpec], graph: TaskGraph, mission_id: str, confirmed_nested=None, rollback_completed=None) -> list[dict]:
         rows = []
+        rollback_completed = rollback_completed if rollback_completed is not None else []
         for spec in reversed(specs):
             if graph.tasks[spec.id].status != TaskStatus.COMPLETED or not spec.rollback_action:
                 continue
@@ -472,13 +474,23 @@ class MissionEngine:
                 continue
             arguments = dict(spec.rollback_arguments or {})
             risk = self._risk(spec.rollback_action, spec.rollback_risk)
+            ledger_entry = {"step_id": spec.id, "action": spec.rollback_action, "arguments_fingerprint": self._argument_fingerprint(arguments)}
+            if any(
+                item.get("step_id") == ledger_entry["step_id"]
+                and item.get("action") == ledger_entry["action"]
+                and item.get("arguments_fingerprint") == ledger_entry["arguments_fingerprint"]
+                for item in rollback_completed
+                if isinstance(item, Mapping)
+            ):
+                rows.append({"step": spec.id, "success": True, "already_completed": True})
+                continue
             selected = self._nested_matches(confirmed_nested, "rollback", spec.id, spec.rollback_action, arguments, risk)
             permission = self.authorize(spec.rollback_action, arguments, risk)
+            if permission == "deny":
+                rows.append({"step": spec.id, "success": False, "error": "rollback denied"})
+                continue
             if permission == "confirm" and not selected:
                 rows.append({"step": spec.id, "success": False, "waiting_user": True, "error": "rollback authorization required", "checkpoint": self._nested_checkpoint(mission_id, spec.id, "rollback", spec.rollback_action, arguments, risk)})
-                continue
-            if permission == "deny" and not selected:
-                rows.append({"step": spec.id, "success": False, "error": "rollback denied"})
                 continue
             try:
                 result = dict(action(**arguments) or {})
@@ -489,6 +501,8 @@ class MissionEngine:
                         "result": result,
                     }
                 )
+                if rows[-1]["success"] and len(rollback_completed) < 16:
+                    rollback_completed.append(ledger_entry)
             except Exception as exc:
                     rows.append({"step": spec.id, "success": False, "error": redact(f"{type(exc).__name__}: {exc}")})
         return rows

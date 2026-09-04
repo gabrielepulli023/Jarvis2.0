@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_missions.engine import MissionEngine
+from jarvis_missions.engine import MissionEngine, StepSpec
 from jarvis_missions.planner import MissionPlanner, MissionToolCatalogAdapter
 from jarvis_missions.store import MissionStore
 from jarvis_core.events import EventBus
@@ -206,6 +206,78 @@ class CanonicalMissionTests(unittest.TestCase):
         resumed = engine.resume_nested_confirmation(mission["id"], step_id="s", nested_action="precondition", action="search", executor=lambda action, args: calls.append(action))
         self.assertEqual(resumed["status"], "cancelled")
         self.assertEqual(calls, [])
+
+    def test_precondition_current_deny_after_confirmation_never_executes(self):
+        policy = {"value": "confirm"}
+        engine = self.make_engine(authorize=lambda action, args, risk: policy["value"] if action == "search" else "allow")
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("deny-pre", {"steps": [{"id": "s", "action": "open", "precondition": {"action": "search", "risk": "sensitive"}}]})
+        first = engine.run_plan(plan, executor=lambda action, args: {"success": True, "observed": {"ok": True}})
+        policy["value"] = "deny"
+        resumed = engine.resume_nested_confirmation(first["id"], step_id="s", nested_action="precondition", action="search", executor=lambda action, args: (_ for _ in ()).throw(AssertionError("denied precondition executed")))
+        self.assertNotEqual(resumed["status"], "completed")
+
+    def test_fallback_current_deny_after_confirmation_never_executes(self):
+        policy = {"value": "confirm"}
+        engine = MissionEngine(MissionStore(Path(tempfile.mkdtemp()) / "missions.db"), authorize=lambda action, args, risk: policy["value"] if action == "f1" else "allow", recovery=RecoveryEngine(EventBus(), RecoveryPolicy(max_retries=0, action_timeout=.2, global_timeout=1)))
+        nested_calls = []
+        engine.register_action("primary", lambda: {"successo": True, "observed": {"bad": True}})
+        engine.register_action("f1", lambda: (nested_calls.append("f1") or {"successo": True, "observed": {"one": True}}))
+        spec = StepSpec("s", "step", "primary", {}, {"done": True}, max_attempts=1, fallbacks=({"id": "F1", "action": "f1", "expected": {"one": True}, "risk": "sensitive"},))
+        first = engine.run("deny-fallback", [spec], plan_payload={"objective": "deny-fallback", "steps": [{"id": "s", "action": "primary", "max_attempts": 1, "expected": {"done": True}, "fallbacks": list(spec.fallbacks)}]})
+        policy["value"] = "deny"
+        resumed = engine.resume_nested_confirmation(first["id"], step_id="s", nested_action="fallback", action="f1", fallback_index=0, fallback_id="F1", executor=lambda action, args: (_ for _ in ()).throw(AssertionError("denied fallback executed")))
+        self.assertNotEqual(resumed["status"], "completed")
+        self.assertEqual(nested_calls, [])
+        engine.recovery.shutdown()
+
+    def test_rollback_current_deny_after_confirmation_never_executes(self):
+        policy = {"value": "confirm"}
+        engine = MissionEngine(MissionStore(Path(tempfile.mkdtemp()) / "missions.db"), authorize=lambda action, args, risk: policy["value"] if action == "undo" else "allow")
+        calls = []
+        engine.register_action("ok", lambda: {"successo": True, "observed": {"ok": True}})
+        engine.register_action("bad", lambda: {"successo": False})
+        engine.register_action("undo", lambda: (calls.append("undo") or {"successo": True}))
+        specs = [StepSpec("a", "ok", "ok", {}, {"ok": True}, rollback_action="undo", rollback_risk="sensitive"), StepSpec("b", "bad", "bad", {}, {}, frozenset({"a"}), max_attempts=1)]
+        first = engine.run("deny-rollback", specs, plan_payload={"objective": "deny-rollback", "steps": [{"id": "a", "action": "ok", "expected": {"ok": True}, "rollback": {"action": "undo", "risk": "sensitive"}}, {"id": "b", "action": "bad", "dependencies": ["a"], "max_attempts": 1}]})
+        policy["value"] = "deny"
+        resumed = engine.resume_nested_confirmation(first["id"], step_id="a", nested_action="rollback", action="undo", executor=lambda action, args: (_ for _ in ()).throw(AssertionError("denied rollback executed")))
+        self.assertNotEqual(resumed["status"], "completed")
+        self.assertEqual(calls, [])
+
+    def test_two_sensitive_rollbacks_are_exactly_once_and_have_ledger(self):
+        policy = {"value": "confirm"}
+        store = MissionStore(Path(tempfile.mkdtemp()) / "missions.db")
+        engine = MissionEngine(store, authorize=lambda action, args, risk: policy["value"] if action in {"undo_a", "undo_b"} else "allow")
+        calls = []
+        engine.register_action("ok_a", lambda: {"successo": True, "observed": {"ok": True}})
+        engine.register_action("ok_b", lambda: {"successo": True, "observed": {"ok": True}})
+        engine.register_action("bad", lambda: {"successo": False})
+        engine.register_action("undo_a", lambda: {"success": True})
+        engine.register_action("undo_b", lambda: {"success": True})
+        specs = [
+            StepSpec("a", "A", "ok_a", {}, {"ok": True}, rollback_action="undo_a", rollback_risk="sensitive"),
+            StepSpec("b", "B", "ok_b", {}, {"ok": True}, frozenset({"a"}), rollback_action="undo_b", rollback_risk="sensitive"),
+            StepSpec("c", "C", "bad", {}, {}, frozenset({"b"}), max_attempts=1),
+        ]
+        payload = {"objective": "multi-rollback", "steps": [{"id": "a", "action": "ok_a", "expected": {"ok": True}, "rollback": {"action": "undo_a", "risk": "sensitive"}}, {"id": "b", "action": "ok_b", "dependencies": ["a"], "expected": {"ok": True}, "rollback": {"action": "undo_b", "risk": "sensitive"}}, {"id": "c", "action": "bad", "dependencies": ["b"], "max_attempts": 1}]}
+        first = engine.run("multi-rollback", specs, plan_payload=payload)
+        self.assertEqual(first["status"], "waiting_user", repr(first))
+        self.assertEqual(first["checkpoint"]["nested_action"], "rollback")
+        self.assertEqual(first["checkpoint"]["step_id"], "b")
+        def dispatch(action, args):
+            calls.append(action)
+            return {"success": True}
+        second = engine.resume_nested_confirmation(first["id"], step_id="b", nested_action="rollback", action="undo_b", executor=dispatch)
+        self.assertEqual(calls, ["undo_b"])
+        self.assertEqual(second["status"], "waiting_user")
+        self.assertEqual(second["checkpoint"]["step_id"], "a")
+        self.assertEqual(second["checkpoint"]["rollback_completed"][0]["step_id"], "b")
+        # A fresh engine models restart: B is read from MissionStore and is not rerun.
+        restarted = MissionEngine(store, authorize=lambda action, args, risk: "confirm" if action == "undo_a" else "allow")
+        final = restarted.resume_nested_confirmation(second["id"], step_id="a", nested_action="rollback", action="undo_a", executor=dispatch)
+        self.assertEqual(calls, ["undo_b", "undo_a"])
+        self.assertEqual(final["status"], "failed")
+        self.assertEqual({row["step_id"] for row in final["checkpoint"]["rollback_completed"]}, {"a", "b"})
 
     def _worker_bridge(self, engine, pending, confirmed):
         import brain

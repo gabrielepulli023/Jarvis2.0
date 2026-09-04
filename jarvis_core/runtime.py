@@ -52,6 +52,7 @@ from jarvis_system import (
     StartupManager,
     RuntimePerformanceMonitor,
 )
+from proactive import SystemSignalMonitor
 from jarvis_vault import CredentialVault
 from dataclasses import asdict
 from audit_log import recent as recent_audit, record_action
@@ -71,6 +72,7 @@ class CoreRuntime:
         self.events = EventBus(self.logger)
         self.state = StateManager(self.events)
         self.notifications = NotificationCenter(self.events)
+        self.system_signals = SystemSignalMonitor(self.events, interval=30.0)
         self.filesystem_watchers = FilesystemWatchRegistry(self.events, self.notifications, self.logger)
         self.emergency = EmergencyStopCoordinator(self.events)
         self.recovery = RecoveryEngine(self.events)
@@ -185,7 +187,29 @@ class CoreRuntime:
             config=self.config.get("companion", {}),
             logger=self.logger,
             persistence_path=data_path("companion") / "preferences.json",
+            notifications=self.notifications,
+            context_provider=lambda: self.context.snapshot(include_world=False),
         )
+        self.skills.register(
+            SkillManifest("companion.status", "1.0.0", "Show proactive companion status",
+                          ("stato companion", "proactive status", "come stai companion"), frozenset(),
+                          "runtime:companion_status"), lambda: {"success": True, "data": self.companion.status()})
+        self.skills.register(
+            SkillManifest("companion.enable", "1.0.0", "Enable or disable proactive interventions",
+                          ("abilita companion", "disabilita companion"), frozenset(), "runtime:companion_enable"),
+            lambda enabled=True: (self.companion.set_enabled(enabled) or {"success": True, "data": self.companion.status()}))
+        self.skills.register(
+            SkillManifest("companion.mode.set", "1.0.0", "Set companion mode",
+                          ("modalità companion", "imposta modalità companion"), frozenset(), "runtime:companion_mode_set"),
+            lambda mode: (self.companion.set_mode(mode) or {"success": True, "data": self.companion.status()}))
+        self.skills.register(
+            SkillManifest("companion.category.mute", "1.0.0", "Mute a proactive category",
+                          ("silenzia categoria companion",), frozenset(), "runtime:companion_category_mute"),
+            lambda category: (self.companion.mute_category(category) or {"success": True, "data": self.companion.status()}))
+        self.skills.register(
+            SkillManifest("companion.category.unmute", "1.0.0", "Unmute a proactive category",
+                          ("riattiva categoria companion",), frozenset(), "runtime:companion_category_unmute"),
+            lambda category: (self.companion.unmute_category(category) or {"success": True, "data": self.companion.status()}))
         self.performance_monitor = RuntimePerformanceMonitor(self.voice, self.missions, self.automation)
         self.system_information = SystemInformation(self.windows, self.performance_monitor.gpu)
         register_application_skills(self.skills, self.processes, self.memory, Path(__file__).resolve().parent.parent)
@@ -942,6 +966,7 @@ class CoreRuntime:
             self.logger.warning("expansion.sidecar.start_failed", extra={"error": str(exc)})
         self.local_services.start_background()
         self.companion.start()
+        self.system_signals.start()
         self.hardware_events.start()
 
     def stop(self) -> None:
@@ -951,6 +976,7 @@ class CoreRuntime:
             self._stopped = True
         self.events.publish("core.stopping")
         cleanup = (
+            ("system_signals", self.system_signals.stop),
             ("hardware", self.hardware_events.stop),
             ("windows_ui", self.windows_ui.close),
             ("context", self.context.close),

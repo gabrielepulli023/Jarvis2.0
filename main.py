@@ -1158,6 +1158,17 @@ class JarvisWorker(QThread):
 
         pending = pending_confirmation_actions()
         normalized = re.sub(r"[\s,.;:!?]+", " ", str(domanda or "").casefold()).strip()
+        if intent == "confirm" and not pending and not action_id:
+            missions = CORE_RUNTIME.missions.waiting_preflight()
+            if len(missions) == 1:
+                from jarvis_missions import MissionExecutionAdapter
+                checkpoint = missions[0].get("checkpoint") or {}
+                result = CORE_RUNTIME.missions.resume_preflight(missions[0]["id"], checkpoint["task"], executor=MissionExecutionAdapter(CORE_RUNTIME.skills))
+                self._risposta_locale("Missione ripresa." if result.get("status") == "completed" else "Missione ancora in esecuzione.")
+                return True
+            if len(missions) > 1:
+                self._risposta_locale("Ci sono più missioni in attesa: specifica l'identificativo.")
+                return True
         if intent == "confirm" and not pending and not action_id and normalized == "procedi" and is_operational_followup(
             domanda, _contesto_operativo_corrente()
         ):
@@ -1165,6 +1176,14 @@ class JarvisWorker(QThread):
         if intent == "confirm":
             pin = _confirmation_pin(domanda) if action_id else None
             result = conferma_azione(action_id, pin) if action_id else conferma_ultima_azione()
+            confirmed_action = result.get("azione_id") or result.get("action_id") or action_id
+            if not confirmed_action and len(pending) == 1:
+                pending_row = pending[0] if isinstance(pending, list) else next(iter(pending.values()))
+                confirmed_action = pending_row.get("action_id")
+            binding = CORE_RUNTIME.missions.mission_for_action(confirmed_action) if confirmed_action else None
+            if binding and result.get("successo"):
+                from jarvis_missions import MissionExecutionAdapter
+                result = CORE_RUNTIME.missions.accept_confirmed_result(binding[0], binding[1], result, executor=MissionExecutionAdapter(CORE_RUNTIME.skills))
             message = messaggio_risultato_operativo(result) if result.get("successo") else str(
                 result.get("messaggio") or "Conferma non eseguita."
             )

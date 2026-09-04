@@ -14,6 +14,7 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
     WAITING_USER = "waiting_user"
     SKIPPED = "skipped"
+    NEEDS_VERIFICATION = "needs_verification"
 
 
 @dataclass(slots=True)

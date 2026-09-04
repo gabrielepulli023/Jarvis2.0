@@ -2931,16 +2931,18 @@ def _esegui_missione_canonica(testo, cognitive_decision):
     """Run only validated Phase 5 plans through the existing tool executor."""
     if not cognitive_decision.mission_required:
         return None
-    from jarvis_missions import MissionPlanner, MissionToolCatalogAdapter, PlanValidator
+    from jarvis_missions import MissionExecutionAdapter, MissionPlanner, MissionToolCatalogAdapter, PlanValidator
     try:
-        proposed = plan_mission(client, str(get_setting("ai_model", MODELLO_ROUTER)), testo)
         catalog = MissionToolCatalogAdapter(CORE_RUNTIME.skills)
-        plan = MissionPlanner(catalog, PlanValidator(catalog)).plan(testo, proposed=proposed)
-        mission = CORE_RUNTIME.missions.run_plan(plan, executor=esegui_tool)
+        planner = MissionPlanner(catalog, PlanValidator(catalog))
+        plan = planner.plan_with_model(client, str(get_setting("ai_model", MODELLO_ROUTER)), testo, CORE_RUNTIME.context.snapshot())
         orchestrator = getattr(CORE_RUNTIME, "orchestrator", None)
-        if orchestrator is not None and mission.get("id"):
-            orchestrator.begin(testo, plan.as_dict(), run_id=mission["id"])
-            orchestrator.finish(mission["id"], str(mission.get("status", "unknown")), "MissionEngine canonical execution")
+        mission_id = CORE_RUNTIME.missions.prepare(plan)
+        if orchestrator is not None:
+            orchestrator.begin(testo, plan.as_dict(), run_id=mission_id)
+        mission = CORE_RUNTIME.missions.run_plan(plan, executor=MissionExecutionAdapter(CORE_RUNTIME.skills), mission_id=mission_id, on_step=(orchestrator.observe if orchestrator is not None else None))
+        if orchestrator is not None and mission.get("status") != "waiting_user":
+            orchestrator.finish(mission_id, str(mission.get("status", "unknown")), "MissionEngine canonical execution")
         status = str(mission.get("status", "failed"))
         if status == "waiting_user":
             return True, "Missione in attesa di conferma per il prossimo passo.", False

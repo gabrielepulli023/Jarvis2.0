@@ -10,6 +10,28 @@ from .graph import TaskGraph
 from jarvis_core.logging import redact
 
 
+def _bounded(value, depth=0):
+    if depth > 6:
+        return "[bounded]"
+    if isinstance(value, dict):
+        return {str(k)[:80]: _bounded(v, depth + 1) for k, v in list(value.items())[:64]}
+    if isinstance(value, (list, tuple)):
+        return [_bounded(v, depth + 1) for v in list(value)[:64]]
+    if isinstance(value, str):
+        return value[:2000]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:500]
+
+
+def _json(value, limit=50000):
+    payload = _bounded(redact(value))
+    text = json.dumps(payload, ensure_ascii=False)
+    if len(text) <= limit:
+        return text
+    return json.dumps({"truncated": True, "summary": text[: min(1000, limit - 40)]}, ensure_ascii=False)
+
+
 class MissionStore:
     SCHEMA_VERSION = 2
 
@@ -50,11 +72,12 @@ class MissionStore:
     def create(self, objective: str, graph: TaskGraph, plan: dict | None = None) -> str:
         mission_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc).isoformat()
-        payload = json.dumps(graph.as_dict(), ensure_ascii=False)
+        payload = _json(graph.as_dict())
+        objective_value = str(redact(objective))[:1000]
         with self._lock, self._connection() as db:
             db.execute(
                 "INSERT INTO missions(id,objective,status,graph_json,checkpoint_json,plan_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                (mission_id, str(objective)[:1000], "pending", payload, "{}", json.dumps(redact(plan or {}), ensure_ascii=False)[:20000], now, now),
+                (mission_id, objective_value, "pending", payload, "{}", _json(plan or {}, 20000), now, now),
             )
             db.execute(
                 "INSERT INTO mission_events(mission_id,event,payload_json,created_at) VALUES(?,?,?,?)",
@@ -72,8 +95,8 @@ class MissionStore:
         event: str = "mission.updated",
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
-        graph_json = json.dumps(redact(graph.as_dict()), ensure_ascii=False)[:50000]
-        checkpoint_json = json.dumps(redact(checkpoint or {}), ensure_ascii=False)[:20000]
+        graph_json = _json(graph.as_dict())
+        checkpoint_json = _json(checkpoint or {}, 20000)
         with self._lock, self._connection() as db:
             changed = db.execute(
                 "UPDATE missions SET status=?,graph_json=?,checkpoint_json=?,updated_at=? WHERE id=?",
@@ -83,7 +106,7 @@ class MissionStore:
                 raise KeyError(mission_id)
             db.execute(
                 "INSERT INTO mission_events(mission_id,event,payload_json,created_at) VALUES(?,?,?,?)",
-                (mission_id, event, checkpoint_json, now),
+                (mission_id, event, _json(checkpoint or {}, 20000), now),
             )
 
     def get(self, mission_id: str) -> dict | None:

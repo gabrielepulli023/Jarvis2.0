@@ -28,6 +28,11 @@ class EvidenceEngine:
     def verify(self, action: str, expected: dict, result: dict) -> Evidence:
         if action in self._verifiers:
             return self._verifiers[action](expected, result)
+        verification = result.get("verification")
+        if isinstance(verification, dict) and "status" in verification:
+            status = str(verification.get("status", "")).lower()
+            strength = float(verification.get("strength", 0.0) or 0.0)
+            return Evidence("explicit_verification", status == "verified", max(0.0, min(strength, 1.0)), str(verification.get("evidence", status)), str(expected))
         if not result.get("successo", result.get("success", False)):
             return Evidence(
                 "action_result", False, 1.0, str(result.get("messaggio", result.get("error", "failed"))), str(expected)

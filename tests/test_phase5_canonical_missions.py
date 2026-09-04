@@ -74,6 +74,30 @@ class CanonicalMissionTests(unittest.TestCase):
         record = store.get(mission_id)
         self.assertNotIn("hidden", str(record["plan"]))
 
+    def test_preflight_checkpoint_and_resume_same_id(self):
+        engine = self.make_engine(authorize=lambda action, args, risk: "confirm")
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("open", {"steps": [{"id": "open", "action": "open", "arguments": {"path": "x"}}]})
+        first = engine.run_plan(plan, executor=lambda action, args: {"success": True, "observed": {}})
+        self.assertEqual(first["checkpoint"]["confirmation_mode"], "preflight")
+        resumed = engine.resume_preflight(first["id"], "open", executor=lambda action, args: {"success": True, "observed": {}})
+        self.assertEqual(resumed["id"], first["id"])
+
+    def test_late_confirmation_ingest_is_exactly_once(self):
+        engine = self.make_engine()
+        calls = []
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("open", {"steps": [{"id": "open", "action": "open", "arguments": {"path": "x"}, "expected": {"opened": True}}]})
+        first = engine.run_plan(plan, executor=lambda action, args: {"richiede_conferma": True, "azione_id": "a1"})
+        final = engine.accept_confirmed_result(first["id"], "open", {"success": True, "observed": {"opened": True}}, executor=lambda action, args: calls.append(action))
+        self.assertEqual(final["status"], "completed")
+        self.assertEqual(calls, [])
+
+    def test_explicit_unverified_confirmation_stays_conservative(self):
+        engine = self.make_engine()
+        plan = MissionPlanner(MissionToolCatalogAdapter(_Registry())).plan("open", {"steps": [{"id": "open", "action": "open", "arguments": {"path": "x"}}]})
+        first = engine.run_plan(plan, executor=lambda action, args: {"requires_confirmation": True, "action_id": "a2"})
+        final = engine.accept_confirmed_result(first["id"], "open", {"success": True, "verification": {"status": "unverified", "strength": 0.2}}, executor=lambda action, args: None)
+        self.assertEqual(final["status"], "needs_verification")
+
 
 if __name__ == "__main__":
     unittest.main()

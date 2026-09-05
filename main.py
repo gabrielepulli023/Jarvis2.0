@@ -326,12 +326,17 @@ def _prepare_cognitive_turn(original_text, resolved_text, reference=None, operat
     if cognition is None:
         return decide(resolved_text, has_context=bool(reference or operational_context))
     try:
-        return cognition.decide(
+        decision = cognition.decide(
             original_text,
             resolved_operational_text=resolved_text,
             reference=reference,
             operational_context=operational_context,
         )
+        try:
+            CORE_RUNTIME.decision_memory.observe_decision(decision, objective=original_text)
+        except Exception:
+            pass
+        return decision
     except Exception as exc:
         print("[WARN] cognitive decision degraded:", redact(repr(exc)))
         return decide(resolved_text, has_context=bool(reference or operational_context))

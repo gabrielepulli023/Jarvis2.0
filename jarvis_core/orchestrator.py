@@ -30,13 +30,14 @@ class OrchestrationTrace:
 class AutonomousOrchestrator:
     """Coordinate objective context without creating a second execution stack."""
 
-    def __init__(self, registry, state=None, max_traces: int = 32):
+    def __init__(self, registry, state=None, max_traces: int = 32, decision_memory=None):
         self.registry = registry
         self.state = state
         self.max_traces = max(4, int(max_traces))
         self._traces: dict[str, OrchestrationTrace] = {}
         self._lock = threading.RLock()
         self._counter = 0
+        self.decision_memory = decision_memory
 
     def capability_catalog(self, objective: str = "", limit: int = 80) -> list[dict[str, Any]]:
         """Return the registry metadata most relevant to an objective."""
@@ -163,6 +164,52 @@ class AutonomousOrchestrator:
             trace.status = str(status)
             trace.finished_at = time.time()
             result = self.snapshot(run_id)
+        if self.decision_memory is not None:
+            try:
+                steps = result.get("steps", [])
+                reason_codes = []
+                events = []
+                for step in steps:
+                    if step.get("status") == "failed":
+                        events.append("task.failed")
+                    elif step.get("status") == "unverified":
+                        reason_codes.append("unverified_side_effect")
+                        events.append("task.unverified")
+                    elif step.get("status") == "verified":
+                        events.append("task.completed")
+                normalized_status = str(status).lower()
+                if normalized_status in {"cancelled", "canceled"}:
+                    outcome, reason_codes = "cancelled", [*reason_codes, "cancelled"]
+                    events.append("mission.cancelled")
+                elif normalized_status == "timeout":
+                    outcome = "failed"
+                    events.append("task.timeout")
+                elif normalized_status == "precondition_failed":
+                    outcome = "blocked"
+                    events.append("task.precondition_failed")
+                elif normalized_status in {"completed", "complete", "success"} and any(step.get("status") == "verified" for step in steps):
+                    outcome = "verified_success"
+                    events.append("mission.completed")
+                elif normalized_status in {"completed", "complete", "success"}:
+                    outcome = "success_unverified"
+                    events.append("mission.completed")
+                elif normalized_status in {"blocked", "waiting", "precondition_failed"}:
+                    outcome = "blocked"
+                else:
+                    outcome = "failed"
+                    events.append("mission.failed")
+                self.decision_memory.record_mission_outcome(result.get("objective", ""), {
+                    "mission_id": run_id,
+                    "outcome": outcome,
+                    "verified": outcome == "verified_success", "outcome_confidence": 1.0 if outcome == "verified_success" else .5,
+                    "selected_skills": [step.get("skill", step.get("tool", "")) for step in steps],
+                    "selected_capabilities": result.get("selected_capabilities", []),
+                    "reason_codes": reason_codes, "observed_event_codes": events,
+                    "fallback_used": [step.get("fallback_used") for step in steps if step.get("fallback_used")],
+                    "recovery_count": result.get("recovery_requests", 0), "source": "orchestrator",
+                })
+            except Exception:
+                pass
         self._publish(trace)
         return {**result, "summary": str(summary or "")[:2000]}
 

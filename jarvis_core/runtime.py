@@ -16,7 +16,7 @@ from .state_machine import JarvisState, JarvisStateMachine
 from app_paths import data_path, data_directory
 from .diagnostics import DiagnosticsRunner
 from jarvis_missions import MissionEngine, MissionStore
-from jarvis_memory import MemoryStore
+from jarvis_memory import DecisionMemory, MemoryStore
 from jarvis_search import UniversalSearch
 from pathlib import Path
 from jarvis_skills import Capability, SkillManifest, SkillRegistry
@@ -173,6 +173,7 @@ class CoreRuntime:
         self.memory = MemoryStore(data_path("jarvis_memory.db"))
         self.world = WorldModel(self.memory.working, events=self.events)
         self.mission_store = MissionStore(data_path("missions") / "missions.db")
+        self.decision_memory = DecisionMemory(self.memory, mission_store=self.mission_store)
         self.missions = MissionEngine(
             self.mission_store, memory=self.memory, recovery=self.recovery, authorize=self._authorize_mission, catalog=self.skills
         )
@@ -834,7 +835,19 @@ class CoreRuntime:
         self.doctor = DiagnosticsRunner(Path(__file__).resolve().parent.parent, data_directory())
         # Coordinator over the existing planner, router, registry and mission
         # state.  It does not introduce another executor or memory store.
-        self.orchestrator = AutonomousOrchestrator(self.skills, self.state)
+        self.orchestrator = AutonomousOrchestrator(self.skills, self.state, decision_memory=self.decision_memory)
+        self.skills.register(
+            SkillManifest("decision_memory.status", "1.0.0", "Show bounded advisory decision memory status",
+                          ("stato memoria decisionale", "decision memory status", "cosa è successo l'ultima volta"), frozenset(),
+                          "runtime:decision_memory_status"), lambda: {"success": True, "data": self.decision_memory.status()})
+        self.skills.register(
+            SkillManifest("decision_memory.recall", "1.0.0", "Recall historical decision evidence as advisory context",
+                          ("come avevi risolto questo problema", "ricordi cosa funzionò", "cosa abbiamo già provato", "esperienze precedenti"), frozenset(),
+                          "runtime:decision_memory_recall"), lambda query, limit=10: {"success": True, "data": {"records": [asdict(record) for record in self.decision_memory.recall(query, limit)]}})
+        self.skills.register(
+            SkillManifest("decision_memory.lessons", "1.0.0", "Summarize bounded historical outcomes without authority",
+                          ("lezioni memoria decisionale", "pattern precedenti"), frozenset(),
+                          "runtime:decision_memory_lessons"), lambda query, limit=10: {"success": True, "data": self.decision_memory.lessons(query, limit)})
         self.skills.register(
             SkillManifest(
                 "developer.inspect",

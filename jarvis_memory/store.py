@@ -20,6 +20,7 @@ class MemoryKind(StrEnum):
     SESSION = "session"
     PREFERENCE = "preference"
     TASK = "task"
+    DECISION = "decision"
 
 
 def _now() -> str:
@@ -284,6 +285,105 @@ class MemoryStore:
                 [(now, x["id"]) for x in rows],
             )
         return rows
+
+    def find_exact(self, content: str, *, kind: MemoryKind | str) -> dict | None:
+        """Read an exact item without changing use_count or ranking state."""
+        digest = hashlib.sha256(_normalize(content).encode()).hexdigest()
+        with self._lock, self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM memory_items WHERE active=1 AND kind=? AND normalized_hash=?",
+                (MemoryKind(kind).value, digest),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["metadata"] = json.loads(item.pop("metadata_json"))
+        return item
+
+    def update_metadata(self, memory_id: str, metadata: dict) -> bool:
+        """Atomically replace metadata for a bounded, already-known item."""
+        metadata = {"occurrences": max(1, min(100000, int((metadata or {}).get("occurrences", 1)))),
+                     "fingerprint": str((metadata or {}).get("fingerprint", ""))[:64]}
+        with self._lock, self._connection() as db:
+            return bool(db.execute(
+                "UPDATE memory_items SET metadata_json=?,updated_at=? WHERE id=? AND active=1",
+                (json.dumps(metadata, ensure_ascii=False), _now(), str(memory_id)),
+            ).rowcount)
+
+    def count(self, *, kind: MemoryKind | str | None = None) -> int:
+        """Side-effect-free count; unlike search it never increments use_count."""
+        sql = "SELECT COUNT(*) FROM memory_items WHERE active=1 AND (expires_at IS NULL OR expires_at>?)"
+        params = [_now()]
+        if kind:
+            sql += " AND kind=?"
+            params.append(MemoryKind(kind).value)
+        with self._lock, self._connection() as db:
+            return int(db.execute(sql, params).fetchone()[0])
+
+    def list_metadata(self, *, kind: MemoryKind | str | None = None, limit: int = 10000) -> list[dict]:
+        """Read bounded metadata/content for diagnostics without usage mutation."""
+        sql = "SELECT id,kind,content,metadata_json,confidence,importance FROM memory_items WHERE active=1"
+        params = []
+        if kind:
+            sql += " AND kind=?"; params.append(MemoryKind(kind).value)
+        sql += " ORDER BY updated_at DESC LIMIT ?"; params.append(max(1, min(int(limit), 100000)))
+        with self._lock, self._connection() as db:
+            rows = db.execute(sql, params).fetchall()
+        return [{"id": row[0], "kind": row[1], "content": row[2], "metadata": json.loads(row[3]),
+                 "confidence": row[4], "importance": row[5]} for row in rows]
+
+    def increment_occurrence(self, memory_id: str, maximum: int = 100000) -> int:
+        """Minimal bounded metadata mutation for DecisionMemory deduplication."""
+        maximum = max(1, min(int(maximum), 100000))
+        with self._lock, self._connection() as db:
+            row = db.execute("SELECT metadata_json FROM memory_items WHERE id=? AND active=1", (str(memory_id),)).fetchone()
+            if row is None:
+                return 0
+            metadata = json.loads(row[0])
+            value = max(1, min(maximum, int(metadata.get("occurrences", 1)) + 1))
+            metadata = {"occurrences": value, "fingerprint": str(metadata.get("fingerprint", ""))[:64]}
+            db.execute("UPDATE memory_items SET metadata_json=?,updated_at=? WHERE id=?", (json.dumps(metadata), _now(), str(memory_id)))
+            return value
+
+    def remember_or_increment(
+        self,
+        content: str,
+        *,
+        kind: MemoryKind | str = MemoryKind.SEMANTIC,
+        source: str = "user",
+        confidence: float = 1,
+        importance: float = 0.7,
+        metadata: dict | None = None,
+        expires_at: str | None = None,
+        maximum: int = 100000,
+    ) -> dict:
+        """Atomically create an item or increment its bounded occurrences."""
+        value = str(content).strip()
+        if not value:
+            raise ValueError("memory content cannot be empty")
+        if _SENSITIVE.search(value) or _SENSITIVE.search(json.dumps(metadata or {}, ensure_ascii=False)):
+            raise ValueError("I segreti non possono essere memorizzati")
+        kind = MemoryKind(kind)
+        digest = hashlib.sha256(_normalize(value).encode()).hexdigest()
+        identity = hashlib.sha256(f"{kind.value}:{digest}".encode()).hexdigest()[:24]
+        maximum = max(1, min(int(maximum), 100000))
+        confidence = max(0, min(1, float(confidence)))
+        importance = max(0, min(1, float(importance)))
+        now = _now()
+        with self._lock, self._connection() as db:
+            row = db.execute("SELECT id,metadata_json FROM memory_items WHERE kind=? AND normalized_hash=?", (kind.value, digest)).fetchone()
+            if row:
+                current = json.loads(row[1])
+                occurrences = max(1, min(maximum, int(current.get("occurrences", 1)) + 1))
+                updated = {"occurrences": occurrences, "fingerprint": str(current.get("fingerprint", ""))[:64]}
+                db.execute("UPDATE memory_items SET metadata_json=?,updated_at=?,active=1 WHERE id=?", (json.dumps(updated, ensure_ascii=False), now, row[0]))
+                return {"id": row[0], "occurrences": occurrences, "created": False}
+            db.execute(
+                "INSERT INTO memory_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (identity, kind.value, value, digest, json.dumps(metadata or {}, ensure_ascii=False), source,
+                 confidence, importance, now, now, now, 0, expires_at, 1),
+            )
+            return {"id": identity, "occurrences": int((metadata or {}).get("occurrences", 1)), "created": True}
 
     def connect(self, source_id: str, relation: str, target_id: str, confidence: float = 1) -> None:
         if source_id == target_id:

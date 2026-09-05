@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from collections import Counter, deque
@@ -218,13 +219,16 @@ class CompanionEngine:
         system = {
             "system.disk_pressure": ("disk_pressure", "Il disco di sistema è quasi pieno.", .72, .82, .45, False),
             "system.disk_critical": ("disk_critical", "Il disco di sistema è in condizioni critiche.", .95, .95, .8, True),
-            "system.memory_pressure": ("memory_pressure", "La memoria RAM è molto utilizzata.", .68, .82, .4, False),
-            "system.memory_critical": ("memory_critical", "La memoria RAM è in condizioni critiche.", .9, .95, .75, True),
+            "system.memory_pressure": ("memory_pressure", "La RAM è molto utilizzata: siamo al {value:.0f}%.", .68, .82, .4, False),
+            "system.memory_critical": ("memory_critical", "La RAM è quasi satura: siamo al {value:.0f}%.", .9, .95, .75, True),
+            "system.memory_recovered": ("memory_recovered", "La RAM si è stabilizzata, ora l'utilizzo è tornato al {value:.0f}%.", .55, .9, .2, False),
             "system.battery_low": ("battery_low", "La batteria è scarica. Collega l'alimentazione.", .78, .95, .7, False),
             "system.battery_critical": ("battery_critical", "La batteria è quasi esaurita. Collega subito l'alimentazione.", 1., .99, .98, True),
         }
         if event.topic in system:
             reason, message, importance, confidence, urgency, critical = system[event.topic]
+            if event.topic in {"system.memory_pressure", "system.memory_critical", "system.memory_recovered"}:
+                message = message.format(value=self._safe_percentage(event.payload.get("value")))
             proposals = {
                 "memory_pressure": ProactiveProposal("inspect_memory_usage", "Controllare quali processi stanno usando più RAM"),
                 "memory_critical": ProactiveProposal("inspect_memory_usage", "Controllare quali processi stanno usando più RAM"),
@@ -233,7 +237,8 @@ class CompanionEngine:
             }
             return InterventionCandidate(reason, event.source, "system", message, importance,
                                          event.confidence, 1.0, 1.0, 0, urgency, .2, critical,
-                                         f"system:{reason}", proposals.get(reason))
+                                         f"system:{reason}:{event.payload.get('incident_id', 'unknown')}", proposals.get(reason))
+
         hardware = {
             "device.connected": ("device_connected", "È stato collegato un dispositivo.", .45, .82, .1),
             "device.disconnected": ("device_disconnected", "Un dispositivo è stato scollegato.", .62, .88, .35),
@@ -299,6 +304,16 @@ class CompanionEngine:
             f"coding:test-failure:{digest}",
             ProactiveProposal("inspect_failure_context", "Controllare il contesto dell'errore e i test correlati"),
         )
+
+    @staticmethod
+    def _safe_percentage(value: Any) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(parsed):
+            return 0.0
+        return max(0.0, min(100.0, parsed))
 
     def evaluate(self, candidate: InterventionCandidate) -> Decision:
         started, now = time.perf_counter(), self.clock()

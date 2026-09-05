@@ -65,6 +65,25 @@ class CompanionTests(unittest.TestCase):
         self.assertEqual(len(voice.submitted), 1)
         self.assertGreaterEqual(engine.snapshot()["metrics"]["duplicate_suppressions"], 1)
 
+    def test_new_memory_incident_is_not_duplicate_within_cooldown(self):
+        engine, bus, voice, _ = self.make_engine({
+            "mode": "companion", "budget_capacity": 10, "speak_threshold": 0,
+            "hud_threshold": 0, "duplicate_cooldown_seconds": 900,
+        })
+        decisions = []
+        bus.subscribe("companion.decision", decisions.append)
+        first = bus.publish("system.memory_pressure", {"value": 92, "incident_id": "memory-1"},
+                            source="system_signals", confidence=1.0)
+        second = bus.publish("system.memory_pressure", {"value": 92, "incident_id": "memory-2"},
+                             source="system_signals", confidence=1.0)
+        repeated = bus.publish("system.memory_pressure", {"value": 92, "incident_id": "memory-2"},
+                               source="system_signals", confidence=1.0)
+        self.assertNotEqual(engine._candidate_from(first).fingerprint, engine._candidate_from(second).fingerprint)
+        self.assertEqual(engine._candidate_from(second).fingerprint, engine._candidate_from(repeated).fingerprint)
+        self.assertEqual([record.payload["reason"] for record in decisions], ["approved", "approved", "duplicate"])
+        self.assertEqual([record.payload["cooldown"] for record in decisions], [False, False, True])
+        self.assertEqual(len(voice.submitted), 2)
+
     def test_spontaneous_turn_continues_in_normal_conversation(self):
         prompt = contestualizza_risposta_companion("Sì, controllalo.", {"message": "L'errore continua. Vuoi che controlli?"})
         self.assertIn("L'errore continua", prompt)

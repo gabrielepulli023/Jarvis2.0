@@ -5,7 +5,7 @@ import time
 import psutil
 from PySide6.QtCore import QThread, Signal
 
-from settings_store import get_setting
+from settings_store import get_setting, set_setting
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ LOGGER = logging.getLogger(__name__)
 class SystemSignalMonitor:
     """Bounded sensor only: emits typed threshold-crossing events."""
 
-    def __init__(self, events, interval: float = 30.0, probe=None):
+    def __init__(self, events, interval: float = 30.0, probe=None, settings_get=get_setting, settings_set=set_setting):
         self.events = events
         self.interval = max(.5, float(interval))
         self.probe = probe or self._probe
@@ -21,6 +21,17 @@ class SystemSignalMonitor:
         self._thread = None
         self._states = {"memory": "normal", "disk": "normal", "battery": "normal"}
         self._initialized = False
+        self._get_setting = settings_get
+        self._set_setting = settings_set
+        persisted = self._get_setting("system_signal_incidents", {})
+        persisted = persisted.get("memory", {}) if isinstance(persisted, dict) else {}
+        try:
+            sequence = int(persisted.get("sequence", 0))
+        except (TypeError, ValueError):
+            sequence = 0
+        self._memory_incident = {"active": bool(persisted.get("active", False)), "incident_id": str(persisted.get("incident_id", ""))[:40], "peak": persisted.get("peak") if persisted.get("peak") in {"warning", "critical"} else "warning", "stable_samples": 0, "sequence": max(0, min(1000000, sequence))}
+        if self._memory_incident["active"] and not self._memory_incident["incident_id"]:
+            self._memory_incident["active"] = False
 
     @staticmethod
     def _probe():
@@ -34,8 +45,11 @@ class SystemSignalMonitor:
 
     def check_once(self):
         values = dict(self.probe() or {})
+        self._check_memory(values.get("memory_percent"))
         rules = (("memory", "memory_percent", False), ("disk", "disk_percent", False), ("battery", "battery_percent", True))
         for metric, field, battery_rule in rules:
+            if metric == "memory":
+                continue
             value = values.get(field)
             if metric == "battery" and values.get("battery_plugged") is not False:
                 severity = "normal"
@@ -66,6 +80,49 @@ class SystemSignalMonitor:
             self._states[metric] = severity
         self._initialized = True
         return values
+
+    def _persist_memory_incident(self) -> None:
+        current = self._get_setting("system_signal_incidents", {})
+        current = dict(current) if isinstance(current, dict) else {}
+        current["memory"] = {key: self._memory_incident[key] for key in ("active", "incident_id", "peak", "sequence")}
+        try:
+            self._set_setting("system_signal_incidents", current)
+        except Exception as exc:
+            LOGGER.warning("RAM incident persistence failed: %s", type(exc).__name__)
+
+    def _check_memory(self, value) -> None:
+        if value is None:
+            return
+        value = max(0.0, min(100.0, float(value)))
+        incident = self._memory_incident
+        if not incident["active"]:
+            if value < 90:
+                self._states["memory"] = "normal"
+                return
+            incident["sequence"] += 1
+            incident["active"] = True
+            incident["incident_id"] = f"memory-{incident['sequence']}"
+            incident["peak"] = "critical" if value >= 97 else "warning"
+            incident["stable_samples"] = 0
+            self._states["memory"] = incident["peak"]
+            topic = "system.memory_critical" if value >= 97 else "system.memory_pressure"
+            self.events.publish(topic, {"metric": "memory_percent", "value": round(value, 1), "incident_id": incident["incident_id"]}, source="system_signals", confidence=1.0)
+            self._persist_memory_incident()
+            return
+        if value < 88:
+            incident["stable_samples"] += 1
+            if incident["stable_samples"] >= 3:
+                incident["active"] = False
+                self._states["memory"] = "normal"
+                self.events.publish("system.memory_recovered", {"metric": "memory_percent", "value": round(value, 1), "incident_id": incident["incident_id"]}, source="system_signals", confidence=1.0)
+                self._persist_memory_incident()
+            return
+        incident["stable_samples"] = 0
+        severity = "critical" if value >= 97 else "warning"
+        self._states["memory"] = severity
+        if severity == "critical" and incident["peak"] != "critical":
+            incident["peak"] = "critical"
+            self._persist_memory_incident()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -136,9 +193,6 @@ class ProactiveMonitorWorker(QThread):
                     battery = psutil.sensors_battery()
                     if battery and not battery.power_plugged and battery.percent <= 15:
                         self._emit_once("battery", f"Batteria al {battery.percent:.0f} percento. Collega l'alimentazione.", 900)
-                    memory = psutil.virtual_memory()
-                    if memory.percent >= 95:
-                        self._emit_once("memory", f"Memoria RAM utilizzata al {memory.percent:.0f} percento.", 900)
                 except Exception as exc:
                     self._report_error(exc)
             for _ in range(120):

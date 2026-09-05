@@ -529,6 +529,11 @@ def chiedi_jarvis(domanda, cognitive_decision=None):
     if cognitive_decision is None:
         cognitive_decision = decide_intent(domanda)
     instructions += "\n\n" + router_guidance(cognitive_decision)
+    # Presentation-only guidance; the diagnostic path above intentionally bypasses it.
+    try:
+        instructions += "\n\n" + CORE_RUNTIME.personality.prompt_fragment(domanda, cognitive_decision=cognitive_decision)
+    except Exception:
+        pass
     compact_context = compact_current_context(CORE_RUNTIME)
     if compact_context:
         instructions += "\n\nContesto immediato canonico (volatile):\n" + compact_context

@@ -62,6 +62,7 @@ DEFAULTS = {
     "startup_face_login": True,
     "ceo_profile_name": "Gabriele",
     "proactive_enabled": True,
+    "personality_profile": {},
     "disk_alert_percent": 90,
     "compact_mode": False,
     "market_watchlist": None,

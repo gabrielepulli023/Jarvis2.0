@@ -58,6 +58,7 @@ from dataclasses import asdict
 from audit_log import recent as recent_audit, record_action
 from .world_model import WorldModel
 from .cognitive_core import UnifiedCognitiveCore
+from jarvis_personality import PersonalityEngine
 import sys
 import time
 
@@ -190,6 +191,27 @@ class CoreRuntime:
             notifications=self.notifications,
             context_provider=lambda: self.context.snapshot(include_world=False),
         )
+        self.personality = PersonalityEngine()
+        self.skills.register(
+            SkillManifest("personality.status", "1.0.0", "Show the current conversational personality",
+                          ("stato personalità", "profilo personalità", "personality status"), frozenset(),
+                          "runtime:personality_status"),
+            lambda: {"success": True, "data": {"profile": asdict(self.personality.profile())}})
+        self.skills.register(
+            SkillManifest("personality.profile.set", "1.0.0", "Set bounded explicit personality preferences",
+                          ("imposta personalità", "meno formale", "più breve", "riduci sarcasmo"), frozenset(),
+                          "runtime:personality_profile_set"),
+            lambda preferences: {"success": True, "data": {"profile": asdict(self.personality.update(preferences))}})
+        self.skills.register(
+            SkillManifest("personality.adjust", "1.0.0", "Adjust explicit conversational preferences",
+                          ("adatta personalità", "regola tono", "più ironia"), frozenset(),
+                          "runtime:personality_adjust"),
+            lambda preferences: {"success": True, "data": {"profile": asdict(self.personality.update(preferences))}})
+        self.skills.register(
+            SkillManifest("personality.reset", "1.0.0", "Reset personality preferences to defaults",
+                          ("reimposta personalità", "personalità predefinita", "reset personalità"), frozenset(),
+                          "runtime:personality_reset"),
+            lambda: {"success": True, "data": {"profile": asdict(self.personality.reset())}})
         self.skills.register(
             SkillManifest("companion.status", "1.0.0", "Show proactive companion status",
                           ("stato companion", "proactive status", "come stai companion"), frozenset(),
